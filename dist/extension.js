@@ -465,8 +465,8 @@ var statusBar;
 var running;
 var state = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 };
 function localAgents() {
-  const readScope = (root, configNames) => {
-    let defaultModel = "";
+  const readScope = (root, configNames, fallbackModel = "") => {
+    let defaultModel = fallbackModel;
     const configAgents = [];
     for (const name of configNames) try {
       const file = (0, import_path.join)(root, name), source = (0, import_fs.readFileSync)(file, "utf8");
@@ -479,12 +479,12 @@ function localAgents() {
       for (const file of (0, import_fs.readdirSync)(directory)) if (file.endsWith(".md")) markdownAgents.push({ ...parseAgentMarkdown(file, (0, import_fs.readFileSync)((0, import_path.join)(directory, file), "utf8"), defaultModel), source: (0, import_path.join)(directory, file) });
     } catch {
     }
-    return mergeAgents(configAgents, markdownAgents);
+    return { agents: mergeAgents(configAgents, markdownAgents), defaultModel };
   };
   const globalRoot = (0, import_path.join)((0, import_os.homedir)(), ".config", "opencode");
-  const globalAgents = readScope(globalRoot, ["opencode.json", "opencode.jsonc"]);
-  const projectScopes = (vscode.workspace.workspaceFolders ?? []).map((folder) => readScope((0, import_path.join)(folder.uri.fsPath, ".opencode"), ["opencode.json", "opencode.jsonc"]));
-  return mergeAgents(globalAgents, ...projectScopes);
+  const globalScope = readScope(globalRoot, ["opencode.json", "opencode.jsonc"]);
+  const projectScopes = (vscode.workspace.workspaceFolders ?? []).map((folder) => readScope((0, import_path.join)(folder.uri.fsPath, ".opencode"), ["opencode.json", "opencode.jsonc"], globalScope.defaultModel).agents);
+  return mergeAgents(globalScope.agents, ...projectScopes);
 }
 function refreshPanel() {
   if (panel) panel.webview.html = panelHtml(state);
