@@ -210,6 +210,14 @@ Die visuelle Richtung ist modern und lebendig, bleibt aber mit VS-Code-Themes ko
 3. Agenten
 4. Konten & Limits
 
+Die Ansichten verwenden ein gemeinsames funktionales Farbsystem. Kostenlos und gesund werden grün, kostenpflichtig und Limit-bezogen orange, KI und Reasoning violett, Coding blau, Sprache türkis, Vision rosa, Tools gelb und Allround graublau dargestellt. Anbieter-Badges sind davon unterscheidbar: OpenRouter violett, OpenCode Zen türkis und OpenCode Go blau. Farbe ist nie das einzige Unterscheidungsmerkmal; Text, Symbol oder Form ergänzen sie.
+
+Zwecküberschriften sind typografisch deutlich größer als Modellnamen, Bewertungen und Preise. Abstände folgen einer kompakten 4/8/12/16-Pixel-Skala. Wesentliche Status-, Guthaben- und Hinweistexte dürfen umbrechen und werden nicht mit Auslassungszeichen abgeschnitten.
+
+Die Agentenansicht verwendet keine gleichförmige Kachelwand. Sie gruppiert Agenten nach „Handlungsbedarf“, „Passend“ und „Nicht bewertbar“. Innerhalb jeder Gruppe bleiben Agent, aktuelles Modell, Zweck, Status und Empfehlung in stabilen Spalten ausgerichtet. Auf schmalen Fenstern werden diese Spalten zu einer hierarchischen Zeile untereinander angeordnet.
+
+Die Kontenansicht zeigt je Anbieter einen eigenen strukturierten Bereich. Dessen Kopf enthält Anbieter, Verbindungstyp und Verbindungsstatus. Darunter folgen verfügbare Kennzahlen für Guthaben, heutigen, wöchentlichen und monatlichen Verbrauch sowie Limit und Reset. Aktionen gehören zum jeweiligen Anbieter. OpenRouter API-Key und Management Key werden innerhalb des OpenRouter-Bereichs getrennt dargestellt.
+
 ### Bestätigtes Übersichtsdesign
 
 Die Kopfzeile enthält Navigation und Aktualitätsstatus. Darunter stehen die Kennzahlen ohne eigene Kacheln, beispielsweise `418 Modelle · 37 kostenlos · 12 Änderungen · 9 Agenten`.
