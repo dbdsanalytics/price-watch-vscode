@@ -27,3 +27,14 @@ test("replaces offers on a successful fetch", () => {
 test("leaves a failed provider empty when nothing is known yet", () => {
   expect(carryForwardOffers([], [failed(2_000)])[0].offers).toEqual([])
 })
+
+// Zweiter Weg in denselben Fehler: ein Anbieter antwortet erfolgreich, liefert
+// aber nichts (leeres data-Array). Ohne error griff die Rettung bisher nicht.
+const empty = (checkedAt: number): ProviderSnapshot => ({ provider: "openrouter", offers: [], checkedAt, stale: false })
+
+test("rettet die letzten Preise auch bei leerem Ergebnis ohne Fehler", () => {
+  const [snapshot] = carryForwardOffers([ok([offer("a", 1)], 1_000)], [empty(2_000)])
+  expect(snapshot.offers).toEqual([offer("a", 1)])
+  expect(snapshot.checkedAt).toBe(1_000)
+  expect(snapshot.stale).toBe(true)
+})

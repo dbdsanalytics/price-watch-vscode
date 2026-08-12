@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { norm, parseGoDocument, parseZenDocument, toUsd } from "../src/providers/opencode-docs"
+import { norm, parseGoDocument, parseZenDocument, requireOffers, toUsd } from "../src/providers/opencode-docs"
 
 describe("norm", () => {
   test("entfernt Klammer-Inhalte und normalisiert", () => {
@@ -37,5 +37,27 @@ describe("Go document", () => {
   test("parses prices when official docs wrap amounts in markdown emphasis", () => {
     const catalog = parseGoDocument("OpenCode Go — **$5 for your first month**, then **$10/month**")
     expect(catalog.subscription).toEqual({ firstMonthUsd: 5, monthlyUsd: 10 })
+  })
+})
+
+describe("requireOffers", () => {
+  // Die Quelle ist der dev-Branch eines fremden Repos. Aendert sich dort die
+  // Ueberschrift oder die Endpunkt-Tabelle, lieferte der Parser stumm eine
+  // leere Liste — der Abruf galt als erfolgreich und die zuletzt bekannten
+  // Preise wurden verworfen. Ein leeres Ergebnis ist ein Fehler, kein Zustand.
+  test("meldet einen Fehler mit Anbietername, wenn nichts geparst wurde", () => {
+    expect(() => requireOffers("opencode-zen", [])).toThrow(/opencode-zen/)
+    expect(() => requireOffers("opencode-go", [])).toThrow(/opencode-go/)
+  })
+
+  test("reicht vorhandene Angebote unveraendert durch", () => {
+    const offers = parseZenDocument(`${endpoints}\n## Pricing\n| Model | Input | Output |\n|---|---|---|\n| DeepSeek V4 Flash | $0.14 | $0.28 |`)
+    expect(requireOffers("opencode-zen", offers)).toBe(offers)
+  })
+
+  test("umbenannte Ueberschrift fuehrt ueber requireOffers zum Fehler", () => {
+    const umbenannt = `${endpoints}\n## Preise\n| Model | Input | Output |\n|---|---|---|\n| DeepSeek V4 Flash | $0.14 | $0.28 |`
+    expect(parseZenDocument(umbenannt)).toHaveLength(0)
+    expect(() => requireOffers("opencode-zen", parseZenDocument(umbenannt))).toThrow()
   })
 })

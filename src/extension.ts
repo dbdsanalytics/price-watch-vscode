@@ -18,7 +18,7 @@ import type { ProviderSnapshot } from "./domain/provider"
 import { panelHtml, type DashboardState } from "./panel"
 import { aiDashboardSummary, aiFailure } from "./ai"
 import { fetchAllProviders } from "./providers/fetch-all"
-import { fetchOpenCodeDocument, parseGoDocument, parseZenDocument } from "./providers/opencode-docs"
+import { fetchOpenCodeDocument, parseGoDocument, parseZenDocument, requireOffers } from "./providers/opencode-docs"
 import { fetchOpenRouterCatalog } from "./providers/openrouter"
 import { fetchOpenRouterBenchmarks, type OpenRouterBenchmarkSnapshot } from "./providers/openrouter-benchmarks"
 
@@ -65,8 +65,8 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
       : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
     const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
       openrouter: fetchOpenRouterCatalog,
-      "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
-      "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers,
+      "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
+      "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers),
     }),benchmarkSnapshot))
     const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
     const changes = diffOffers(previous, successful)
