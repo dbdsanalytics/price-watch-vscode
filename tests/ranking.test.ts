@@ -9,3 +9,9 @@ test("ranks scored coding models and labels missing benchmarks unrated", () => {
   expect(ranked[0]?.offer.id).toBe("smart")
   expect(ranked[1]?.rating).toBe("unrated")
 })
+
+test("excludes unknown-price and non-text offers from recommendations", () => {
+  const unknown = { ...make("router", 0, 90), pricing: { input: 0, output: 0, unknown: true } }
+  const image = { ...make("image", 0, 95), capabilities: { ...make("image", 0).capabilities, outputModalities: ["image"] } }
+  expect(rankOffers([unknown, image, make("text", 1, 80)], "coding", "all").map((item) => item.offer.id)).toEqual(["text"])
+})

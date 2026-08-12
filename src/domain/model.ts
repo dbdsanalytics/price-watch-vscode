@@ -3,6 +3,7 @@ import type { ProviderId } from "./provider"
 export interface ModelPricing {
   input: number
   output: number
+  unknown?: boolean
   cacheRead?: number
   cacheWrite?: number
   request?: number
@@ -42,13 +43,13 @@ export interface ModelOffer {
 
 export function usdPerMillion(value: string | number | undefined): number {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "")
-  return Number.isFinite(parsed) ? parsed * 1_000_000 : 0
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed * 1_000_000 : 0
 }
 
 export function offerKey(offer: Pick<ModelOffer, "provider" | "id">): string {
   return `${offer.provider}:${offer.id}`
 }
 
-export function isFreePricing(pricing: Pick<ModelPricing, "input" | "output" | "request">): boolean {
-  return pricing.input === 0 && pricing.output === 0 && (pricing.request ?? 0) === 0
+export function isFreePricing(pricing: Pick<ModelPricing, "input" | "output" | "request" | "unknown">): boolean {
+  return !pricing.unknown && pricing.input === 0 && pricing.output === 0 && (pricing.request ?? 0) === 0
 }

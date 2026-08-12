@@ -7,6 +7,10 @@ describe("model domain", () => {
     expect(usdPerMillion(undefined)).toBe(0)
   })
 
+  test("does not convert negative provider sentinels into negative million prices", () => {
+    expect(usdPerMillion("-1")).toBe(0)
+  })
+
   test("keeps offers from different providers distinct", () => {
     expect(offerKey({ provider: "openrouter", id: "model-x" })).toBe("openrouter:model-x")
     expect(offerKey({ provider: "opencode-zen", id: "model-x" })).toBe("opencode-zen:model-x")

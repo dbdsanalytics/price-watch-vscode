@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 – 2026-08-12
+
+- Stellt das vereinbarte kompakte 2:1:1-Dashboard mit responsiven Umbrüchen wieder her.
+- Begrenzt die Agentenvorschau und verhindert überlaufende Texte in schmalen Karten.
+- Behandelt negative OpenRouter-Platzhalter als unbekannte Preise statt als echte Werte.
+- Nutzt die tatsächlichen OpenRouter-Benchmarks für belastbare Ranglisten.
+- Schließt unbewertete und nicht textfähige Modelle aus Empfehlungen aus.
+- Gestaltet Filter, Konten und Detailansichten mit nativen VS-Code-Farben neu.
+- Verwirft den fehlerhaften lokalen Preisverlauf aus Version 0.2.0.
+
 ## 0.2.0 – 2026-08-12
 
 - Zeigt alle Modelle von OpenRouter, OpenCode Zen und OpenCode Go getrennt an.

@@ -18,7 +18,9 @@ import { fetchOpenRouterCatalog } from "./providers/openrouter"
 
 const ZEN_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/zen.mdx"
 const GO_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx"
-const HISTORY_KEY = "priceWatch.history.v2", SNAPSHOT_KEY = "priceWatch.snapshots.v2"
+// v0.2.0 persisted invalid OpenRouter sentinel prices. Keep the corrected data
+// in a fresh namespace so those values cannot reappear after an update or sync.
+const HISTORY_KEY = "priceWatch.history.v3", SNAPSHOT_KEY = "priceWatch.snapshots.v3"
 const secretKey = (provider: string) => `priceWatch.account.${provider}`
 let panel: vscode.WebviewPanel | undefined, statusBar: vscode.StatusBarItem, running: Promise<void> | undefined
 let state: DashboardState = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 }
