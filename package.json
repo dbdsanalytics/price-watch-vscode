@@ -1,0 +1,72 @@
+{
+  "name": "price-watch",
+  "displayName": "Preis-Watch (OpenRouter & OpenCode)",
+  "description": "Zeigt die aktuellen Modellpreise von OpenRouter und OpenCode Zen an; eine kostenlose KI (OpenRouter Free) prüft sie stündlich und meldet Preisänderungen.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "priceWatch.open",
+        "title": "Preis-Watch öffnen",
+        "category": "Preis-Watch"
+      },
+      {
+        "command": "priceWatch.refresh",
+        "title": "Preise jetzt aktualisieren",
+        "category": "Preis-Watch"
+      },
+      {
+        "command": "priceWatch.setKey",
+        "title": "OpenRouter-API-Key festlegen (für die KI)",
+        "category": "Preis-Watch"
+      }
+    ],
+    "configuration": {
+      "title": "Preis-Watch",
+      "properties": {
+        "priceWatch.checkIntervalHours": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "description": "Wie oft die Preise geprüft werden (in Stunden)."
+        },
+        "priceWatch.aiEveryHours": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "description": "Wie oft die kostenlose KI die Preise kommentiert (in Stunden). Hinweis: kostenlose OpenRouter-Modelle haben tägliche Limits."
+        },
+        "priceWatch.aiModel": {
+          "type": "string",
+          "default": "openrouter/free",
+          "description": "Kostenloses KI-Modell für die Preis-Analyse (OpenRouter-Modell-ID)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --external:vscode --outfile=dist/extension.js --format=cjs --platform=node --sourcemap",
+    "watch": "esbuild src/extension.ts --bundle --external:vscode --outfile=dist/extension.js --format=cjs --platform=node --sourcemap --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}
