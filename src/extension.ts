@@ -59,29 +59,37 @@ function updateStatus(): void { statusBar.text = `$(pulse) Preise ${state.snapsh
 async function refresh(context: vscode.ExtensionContext, manual: boolean): Promise<void> {
   if (running) return running
   running = (async () => {
-    const previous = state.snapshots.flatMap((snapshot) => snapshot.offers)
-    const openRouterKey=await context.secrets.get(secretKey("openrouter"))
-    const benchmarkSnapshot=openRouterKey
-      ? await loadBenchmarks(context.globalState,openRouterKey,manual,fetchOpenRouterBenchmarks)
-      : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
-    const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
-      openrouter: fetchOpenRouterCatalog,
-      "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
-      "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers),
-    }),benchmarkSnapshot))
-    const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
-    const changes = diffOffers(previous, successful)
-    state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() }
-    const settings = vscode.workspace.getConfiguration("priceWatch")
-    const aiKey = openRouterKey
-    if (aiKey && shouldRunAi({ lastAt: context.globalState.get<number>(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get<number>("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
-      try { state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get<string>("aiModel", "openrouter/free")) } catch (error) { state.ai = aiFailure(error) }
-      await context.globalState.update(AI_LAST_RUN_KEY, Date.now())
+    try {
+      const previous = state.snapshots.flatMap((snapshot) => snapshot.offers)
+      const openRouterKey=await context.secrets.get(secretKey("openrouter"))
+      const benchmarkSnapshot=openRouterKey
+        ? await loadBenchmarks(context.globalState,openRouterKey,manual,fetchOpenRouterBenchmarks)
+        : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
+      const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
+        openrouter: fetchOpenRouterCatalog,
+        "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
+        "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers),
+      }),benchmarkSnapshot))
+      const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
+      const changes = diffOffers(previous, successful)
+      state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now(), refreshError: null }
+      const settings = vscode.workspace.getConfiguration("priceWatch")
+      const aiKey = openRouterKey
+      if (aiKey && shouldRunAi({ lastAt: context.globalState.get<number>(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get<number>("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
+        try { state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get<string>("aiModel", "openrouter/free")) } catch (error) { state.ai = aiFailure(error) }
+        await context.globalState.update(AI_LAST_RUN_KEY, Date.now())
+      }
+      await context.globalState.update(HISTORY_KEY, state.history)
+      await context.globalState.update(SNAPSHOT_KEY, snapshots)
+      if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch öffnen?`, "Öffnen").then((choice)=>{ if (choice) void vscode.commands.executeCommand("priceWatch.open") })
+      updateStatus(); refreshPanel()
+    } catch (error) {
+      // Netzwerkfehler fangen die Loader ab; alles danach — Anreicherung,
+      // Verrechnung, Persistenz — lief bisher ungeschuetzt. Beide automatischen
+      // Aufrufwege nutzen void refresh(...), eine Rejection blieb also unsichtbar.
+      state = { ...state, refreshError: error instanceof Error ? error.message : String(error) }
+      updateStatus(); refreshPanel()
     }
-    await context.globalState.update(HISTORY_KEY, state.history)
-    await context.globalState.update(SNAPSHOT_KEY, snapshots)
-    if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch öffnen?`, "Öffnen").then((choice)=>{ if (choice) void vscode.commands.executeCommand("priceWatch.open") })
-    updateStatus(); refreshPanel()
   })().finally(() => { running = undefined })
   return running
 }
