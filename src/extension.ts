@@ -4,6 +4,7 @@ import { homedir } from "os"
 import { join } from "path"
 import type { AccountStatus } from "./accounts/types"
 import { fetchOpenRouterAccount, unavailableAccount } from "./accounts/openrouter"
+import { fetchOpenCodeGoAccount } from "./accounts/opencode"
 import { fetchOpenRouterManagement } from "./accounts/openrouter-management"
 import type { AgentMetadata } from "./agents/discovery"
 import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
@@ -18,7 +19,7 @@ import type { ProviderSnapshot } from "./domain/provider"
 import { panelHtml, type DashboardState } from "./panel"
 import { aiDashboardSummary, aiFailure } from "./ai"
 import { fetchAllProviders } from "./providers/fetch-all"
-import { fetchOpenCodeDocument, parseGoDocument, parseZenDocument } from "./providers/opencode-docs"
+import { fetchOpenCodeDocument, parseGoDocument, parseZenDocument, requireOffers } from "./providers/opencode-docs"
 import { fetchOpenRouterCatalog } from "./providers/openrouter"
 import { fetchOpenRouterBenchmarks, type OpenRouterBenchmarkSnapshot } from "./providers/openrouter-benchmarks"
 
@@ -65,8 +66,8 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
       : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
     const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
       openrouter: fetchOpenRouterCatalog,
-      "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
-      "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers,
+      "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
+      "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers),
     }),benchmarkSnapshot))
     const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
     const changes = diffOffers(previous, successful)
@@ -85,15 +86,28 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
   return running
 }
 
+// Nur OpenRouter und OpenCode Go bieten eine persoenliche Usage-API. Fuer die
+// uebrigen Anbieter laesst sich ein Token nicht verifizieren; das wird benannt,
+// statt "Verbunden" zu behaupten.
+const VERIFIABLE: Partial<Record<AccountStatus["provider"], (token: string) => Promise<AccountStatus>>> = {
+  openrouter: fetchOpenRouterAccount,
+  "opencode-go": fetchOpenCodeGoAccount,
+}
+
+async function verifyAccount(provider: AccountStatus["provider"], token: string): Promise<AccountStatus> {
+  const check = VERIFIABLE[provider]
+  return check ? await check(token) : unavailableAccount(provider, "Verbunden · nicht überprüfbar, kein Usage-Endpunkt")
+}
+
 async function connectAccount(context: vscode.ExtensionContext): Promise<void> {
   const provider = await vscode.window.showQuickPick(["openrouter", "opencode-zen", "opencode-go", "claude-code"], { title: "Konto ausdrücklich verbinden" })
   if (!provider) return
   const token = await vscode.window.showInputBox({ title: `${provider} Zugang`, password: true, prompt: "Wird nur im VS Code Secret Store dieses Geräts gespeichert" })
   if (!token) return
-  await context.secrets.store(secretKey(provider), token.trim())
   let account: AccountStatus
-  try { account = provider === "openrouter" ? await fetchOpenRouterAccount(token.trim()) : unavailableAccount(provider as AccountStatus["provider"], "Verbunden · persönliche Usage-API nicht verfügbar") }
-  catch (error) { await context.secrets.delete(secretKey(provider)); void vscode.window.showErrorMessage(`Verbindung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`); return }
+  try { account = await verifyAccount(provider as AccountStatus["provider"], token.trim()) }
+  catch (error) { void vscode.window.showErrorMessage(`Verbindung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`); return }
+  await context.secrets.store(secretKey(provider), token.trim())
   state.accounts = [...state.accounts.filter((item)=>item.provider!==provider), account]; refreshPanel()
 }
 
@@ -124,7 +138,7 @@ async function disconnectOpenRouterManagement(context: vscode.ExtensionContext):
 async function refreshConnectedAccounts(context: vscode.ExtensionContext): Promise<void> {
   const providers: AccountStatus["provider"][] = ["openrouter","opencode-zen","opencode-go","claude-code"]
   const accounts: AccountStatus[] = []
-  for (const provider of providers) { const token = await context.secrets.get(secretKey(provider)); if (!token) continue; try { accounts.push(provider === "openrouter" ? await fetchOpenRouterAccount(token) : unavailableAccount(provider,"Verbunden · persönliche Usage-API nicht verfügbar")) } catch (error) { accounts.push(unavailableAccount(provider,error instanceof Error ? error.message : String(error))) } }
+  for (const provider of providers) { const token = await context.secrets.get(secretKey(provider)); if (!token) continue; try { accounts.push(await verifyAccount(provider, token)) } catch (error) { accounts.push(unavailableAccount(provider,error instanceof Error ? error.message : String(error))) } }
   state.accounts = accounts
   const managementKey = await context.secrets.get(secretKey("openrouter-management"))
   if (!managementKey) state.openRouterManagement = null

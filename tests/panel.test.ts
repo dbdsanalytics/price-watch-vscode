@@ -39,3 +39,10 @@ test("renders a semantic color system and structured agent and account sections"
   expect(html).toContain("198 Aufgaben")
   expect(html).toContain("0,2 $/Aufgabe")
 })
+
+test("zeigt Kontingentangaben ohne Dollarwert statt der generischen Zeile", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [{ provider: "opencode-go", state: "exhausted", message: "5 Std 0 % · Woche 100 % · Monat 50 %", resetAt: "2026-08-17T00:00:00.099Z" }], ai: null, updatedAt: 0 })
+  expect(html).toContain("Woche 100 %")
+  expect(html).toContain("Reset")
+  expect(html).not.toContain("kein festes Schlüssellimit")
+})

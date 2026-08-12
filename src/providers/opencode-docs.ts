@@ -46,6 +46,17 @@ function parsePricing(mdx: string, provider: ProviderId): ModelOffer[] {
 
 export const parseZenDocument = (mdx: string) => parsePricing(mdx, "opencode-zen")
 
+/**
+ * Ein leeres Parse-Ergebnis ist ein Fehler, kein Zustand: Die Dokumente führen
+ * immer Modelle. Ohne diesen Wächter gilt ein strukturell geändertes Dokument
+ * als erfolgreicher Abruf mit null Angeboten — die zuletzt bekannten Preise
+ * werden dann verworfen, ohne dass ein Hinweis erscheint.
+ */
+export function requireOffers(provider: ProviderId, offers: ModelOffer[]): ModelOffer[] {
+  if (!offers.length) throw new Error(`${provider}: keine Preise im Dokument gefunden — Struktur geändert?`)
+  return offers
+}
+
 export interface GoCatalog { subscription: { firstMonthUsd: number; monthlyUsd: number }; offers: ModelOffer[] }
 export function parseGoDocument(mdx: string): GoCatalog {
   const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month[^$]{0,40}\$(\d+(?:\.\d+)?)\/month/i)
