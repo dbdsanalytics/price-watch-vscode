@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import { parseJsonc, stripJsoncComments } from "../src/config"
+import manifest from "../package.json"
+
+describe("extension manifest", () => {
+  test("declares icon and repository metadata", () => {
+    expect(manifest.icon).toBe("media/icon.png")
+    expect(manifest.repository).toEqual({
+      type: "git",
+      url: "https://github.com/dbdsanalytics/price-watch-vscode.git",
+    })
+  })
+})
 
 describe("stripJsoncComments", () => {
   test("entfernt //-Kommentare", () => {
