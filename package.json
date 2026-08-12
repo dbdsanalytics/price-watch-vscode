@@ -36,7 +36,12 @@
       },
       {
         "command": "priceWatch.setKey",
-        "title": "OpenRouter-API-Key festlegen (für die KI)",
+        "title": "Konto verbinden",
+        "category": "Preis-Watch"
+      },
+      {
+        "command": "priceWatch.connectAccount",
+        "title": "Anbieterkonto verbinden",
         "category": "Preis-Watch"
       }
     ],

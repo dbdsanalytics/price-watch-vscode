@@ -35,10 +35,123 @@ __export(extension_exports, {
 });
 module.exports = __toCommonJS(extension_exports);
 var vscode = __toESM(require("vscode"));
+var import_fs = require("fs");
+var import_os = require("os");
+var import_path = require("path");
+
+// src/accounts/openrouter.ts
+function unavailableAccount(provider, message = "Nicht automatisch abrufbar") {
+  return { provider, state: "unavailable", message };
+}
+function parseOpenRouterKeyStatus(body) {
+  const remaining = body.data.limit_remaining ?? void 0;
+  return { provider: "openrouter", state: remaining === 0 ? "exhausted" : remaining !== void 0 && body.data.limit && remaining / body.data.limit < 0.15 ? "low" : "available", label: body.data.label, remainingUsd: remaining, dailyUsd: body.data.usage_daily, weeklyUsd: body.data.usage_weekly, monthlyUsd: body.data.usage_monthly };
+}
+async function fetchOpenRouterAccount(key) {
+  const response = await fetch("https://openrouter.ai/api/v1/key", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15e3) });
+  if (!response.ok) throw new Error(`OpenRouter-Konto HTTP ${response.status}`);
+  return parseOpenRouterKeyStatus(await response.json());
+}
+
+// src/agents/discovery.ts
+function parseAgentMarkdown(filename, source) {
+  const front = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  const header = front?.[1] ?? "";
+  const prompt = front?.[2] ?? source;
+  const value = (key) => header.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim() ?? "";
+  const tools = value("tools").replace(/^\[|\]$/g, "").split(",").map((tool) => tool.trim()).filter(Boolean);
+  return { name: filename.replace(/\.(md|jsonc?)$/, ""), description: value("description"), model: value("model"), tools, prompt };
+}
+function metadataPayload(agent) {
+  return { name: agent.name, description: agent.description, model: agent.model, tools: agent.tools };
+}
+
+// src/domain/model.ts
+function usdPerMillion(value) {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) ? parsed * 1e6 : 0;
+}
+function offerKey(offer) {
+  return `${offer.provider}:${offer.id}`;
+}
+function isFreePricing(pricing) {
+  return pricing.input === 0 && pricing.output === 0 && (pricing.request ?? 0) === 0;
+}
+
+// src/domain/changes.ts
+function diffOffers(previous, next, at = Date.now()) {
+  const before = new Map(previous.map((offer) => [offerKey(offer), offer]));
+  const dimensions = ["input", "output", "cacheRead", "cacheWrite", "request"];
+  const changes = [];
+  for (const offer of next) {
+    const old = before.get(offerKey(offer));
+    if (!old) continue;
+    for (const dimension of dimensions) {
+      const prior = old.pricing[dimension] ?? 0;
+      const current = offer.pricing[dimension] ?? 0;
+      if (prior === current) continue;
+      changes.push({ id: `${offerKey(offer)}:${dimension}:${at}:${prior}:${current}`, at, provider: offer.provider, modelId: offer.id, dimension, previous: prior, current, percent: prior === 0 ? null : (current - prior) / prior * 100 });
+    }
+  }
+  return changes;
+}
+function summarizeChanges(changes) {
+  const providers = new Set(changes.map((change) => change.provider)).size;
+  return `${changes.length} Preis\xE4nderungen bei ${providers} Anbieter${providers === 1 ? "" : "n"}`;
+}
+
+// src/domain/history.ts
+function mergeHistory(local, incoming, now = Date.now()) {
+  const cutoff = now - 90 * 864e5;
+  const merged = /* @__PURE__ */ new Map();
+  for (const event of [...local, ...incoming]) if (event.at >= cutoff) merged.set(event.id, event);
+  return [...merged.values()].sort((a, b) => b.at - a.at);
+}
+
+// src/domain/ranking.ts
+function rankOffers(offers2, purpose, priceMode) {
+  return offers2.filter((offer) => offer.capabilities.purposes.includes(purpose)).filter((offer) => {
+    const free = offer.pricing.input + offer.pricing.output === 0;
+    return priceMode === "all" || (priceMode === "free" ? free : !free);
+  }).map((offer) => {
+    const score = purpose === "coding" ? offer.benchmarks?.coding ?? null : offer.benchmarks?.intelligence ?? null;
+    return { offer, score, rating: score === null ? "unrated" : "scored", reason: score === null ? "Noch kein belastbarer Benchmark" : `${offer.benchmarks?.source}: ${score}` };
+  }).sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || a.offer.pricing.input + a.offer.pricing.output - (b.offer.pricing.input + b.offer.pricing.output));
+}
+
+// src/agents/assessment.ts
+function assessAgent(agent, offers2) {
+  const current = offers2.find((offer) => agent.model.endsWith(offer.id));
+  if (!current) return { agent, status: "unknown", reason: "Aktuelles Modell nicht im Katalog" };
+  if (current.deprecatedAt) return { agent, status: "deprecated", reason: `Abgek\xFCndigt: ${current.deprecatedAt}` };
+  const codingAgent = /code|review|build|debug|develop/i.test(`${agent.name} ${agent.description}`);
+  if (codingAgent && !current.capabilities.purposes.includes("coding")) return { agent, status: "unsuitable", reason: "Keine belastbaren Coding-F\xE4higkeiten ausgewiesen" };
+  const currentCost = current.pricing.input + current.pricing.output;
+  const alternative = offers2.filter((offer) => offer.id !== current.id && (!codingAgent || offer.capabilities.purposes.includes("coding"))).filter((offer) => offer.pricing.input + offer.pricing.output < currentCost * 0.7).sort((a, b) => (b.benchmarks?.coding ?? 0) - (a.benchmarks?.coding ?? 0))[0];
+  return alternative ? { agent, status: "alternative-available", reason: "Mindestens 30 % g\xFCnstigere Alternative verf\xFCgbar", alternative } : { agent, status: "suitable", reason: "F\xE4higkeiten und Preis weiterhin passend" };
+}
+
+// src/panel.ts
+var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+var offers = (state2) => state2.snapshots.flatMap((snapshot) => snapshot.offers);
+function panelHtml(state2) {
+  const all = offers(state2), free = all.filter((offer) => isFreePricing(offer.pricing)).length;
+  const modelRows = all.slice().sort((a, b) => a.pricing.input + a.pricing.output - (b.pricing.input + b.pricing.output)).map((offer) => `<tr><td>${esc(offer.name)}</td><td>${esc(offer.provider)}</td><td>${offer.pricing.input}</td><td>${offer.pricing.output}</td><td>${esc(offer.capabilities.purposes.join(", "))}</td></tr>`).join("");
+  const assessments = state2.agents.map((agent) => assessAgent(agent, all));
+  const agents = assessments.length ? assessments.map(({ agent, status, reason, alternative }) => `<div class="row"><span>${esc(agent.name)} \xB7 ${esc(agent.model)}<small class="muted"> ${esc(reason)}</small></span><b>${esc(status)}${alternative ? ` \u2192 ${esc(alternative.name)}` : ""}</b></div>`).join("") : `<div class="muted">Keine Agenten erkannt</div>`;
+  const accounts = state2.accounts.length ? state2.accounts.map((account) => `<div class="row"><span>${esc(account.provider)}</span><b>${esc(account.remainingUsd ?? account.message ?? account.state)}</b></div>`).join("") : `<button data-action="connect">Konto verbinden</button>`;
+  const topFree = rankOffers(all, "coding", "free").slice(0, 3), topPaid = rankOffers(all, "coding", "paid").slice(0, 3);
+  const ranks = (items) => items.length ? items.map((item, index) => `${index + 1}. ${esc(item.offer.name)}${item.score === null ? " \xB7 noch nicht bewertet" : ` \xB7 ${item.score}`}`).join("<br>") : "Keine bewertbaren Modelle";
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>
+  :root{color-scheme:light dark}*{box-sizing:border-box}body{font:var(--vscode-font-size) var(--vscode-font-family);color:var(--vscode-foreground);margin:0;padding:10px;background:linear-gradient(145deg,var(--vscode-editor-background),color-mix(in srgb,var(--vscode-editor-background) 88%,#4c1d95))}.nav{display:flex;gap:16px;align-items:center;border-bottom:1px solid var(--vscode-panel-border);padding:3px 2px 7px}.nav button{background:none;color:inherit;border:0;padding:0;cursor:pointer}.metrics{display:flex;gap:28px;padding:7px 2px;flex-wrap:wrap}.metrics b{font-size:1.35em}.insight{border-left:2px solid #a78bfa;background:#8b5cf61a;padding:4px 7px;margin-bottom:5px}.grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:5px;align-items:start}.card{background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:7px;padding:5px 7px}.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;padding:2px 0;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 45%,transparent)}.view[hidden]{display:none}.muted{color:var(--vscode-descriptionForeground)}table{width:100%;border-collapse:collapse}td,th{padding:4px;border-bottom:1px solid var(--vscode-panel-border);text-align:left}@media(max-width:1000px){.grid{grid-template-columns:1.5fr 1fr}.accounts{grid-column:2}}@media(max-width:700px){.grid{grid-template-columns:1fr}.accounts{grid-column:auto}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}}
+  </style></head><body><nav class="nav"><b>Preis-Watch</b><button data-view="overview">\xDCbersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button><span style="margin-left:auto">\u25CF aktuell</span></nav>
+  <section class="view" id="overview"><div class="metrics"><span><b>${all.length}</b> Modelle</span><span><b>${free}</b> kostenlos</span><span><b>${state2.history.length}</b> \xC4nderungen</span><span><b>${state2.agents.length}</b> Agenten</span></div><div class="insight"><b>\u2726 KI-Fazit</b> ${esc(state2.ai?.text ?? "Rankings und Preis\xE4nderungen werden lokal ausgewertet.")}</div><div class="grid"><div class="card"><b>Beste Modelle f\xFCr deinen Zweck</b><div class="row"><span><b>Kostenlos \xB7 Coding</b><br>${ranks(topFree)}</span><span><b>Bezahlt \xB7 Coding</b><br>${ranks(topPaid)}</span></div><p class="muted">Coding \xB7 Sprache \xB7 Reasoning \xB7 Vision \xB7 Tools \xB7 Allround</p></div><div class="card"><b>Deine Agenten</b>${agents}</div><div class="card accounts"><b>Konten &amp; Limits</b>${accounts}</div></div></section>
+  <section class="view" id="models" hidden><h2>Alle Modelle</h2><input id="search" placeholder="Modelle durchsuchen"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th></tr></thead><tbody>${modelRows}</tbody></table></section>
+  <section class="view" id="agents" hidden><h2>Deine Agenten</h2>${agents}</section><section class="view" id="accounts" hidden><h2>Konten &amp; Limits</h2>${accounts}</section>
+  <script>const vscode=acquireVsCodeApi();document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==b.dataset.view)}));document.querySelectorAll('[data-action=connect]').forEach(b=>b.addEventListener('click',()=>vscode.postMessage({type:'connect'})));</script></body></html>`;
+}
 
 // src/prices.ts
-var OR_API = "https://openrouter.ai/api/v1/models";
-var ZEN_MDX = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/zen.mdx";
 function norm(name) {
   return String(name).toLowerCase().replace(/\(.*\)/g, "").replace(/[^a-z0-9.]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
@@ -48,409 +161,221 @@ function toUsd(cell) {
   const n = parseFloat(v.replace("$", ""));
   return Number.isNaN(n) ? 0 : n;
 }
-function fmt(v) {
-  const n = Number(v) || 0;
-  if (n === 0) return "0";
-  if (n < 0.01) return n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
-  if (n < 1) return n.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-  if (n < 100) return n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-  return String(Math.round(n));
-}
-function klass(pt, ct) {
-  const total = (pt || 0) + (ct || 0);
-  if (total === 0) return { label: "kostenlos", color: "success" };
-  if (total < 0.5) return { label: "billig", color: "info" };
-  if (total <= 2) return { label: "mittel", color: "warning" };
-  return { label: "Premium", color: "error" };
-}
-function time(ts) {
-  if (!ts) return "\u2013";
-  const d = new Date(ts);
-  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-}
-var splitCells = (line) => line.split("|").map((c) => c.trim()).filter(Boolean);
-function parseZenMdx(mdx) {
-  const idByName = /* @__PURE__ */ new Map();
-  for (const line of mdx.split("\n")) {
-    if (!line.startsWith("|")) continue;
-    const cells = splitCells(line);
-    if (cells.length < 2 || cells[0] === "Model" || /^-+$/.test(cells[0])) continue;
-    if (/^https?:\/\//.test(String(cells[2]).replace(/`/g, ""))) {
-      idByName.set(norm(cells[0]), cells[1]);
-    }
-  }
-  const rows = [];
-  let inPricing = false;
-  for (const line of mdx.split("\n")) {
-    if (line.startsWith("## Pricing")) {
-      inPricing = true;
-      continue;
-    }
-    if (!inPricing) continue;
-    if (line.startsWith("## ") && !line.startsWith("## Pricing")) break;
-    if (!line.startsWith("|")) continue;
-    const cells = splitCells(line);
-    if (cells.length < 3 || cells[0] === "Model" || /^-+$/.test(cells[0])) continue;
-    if (cells[1].toLowerCase().includes("deprecation")) break;
-    const id = idByName.get(norm(cells[0]));
-    if (!id) continue;
-    rows.push({ id, name: cells[0], pt: toUsd(cells[1]), ct: toUsd(cells[2]) });
-  }
-  const best = /* @__PURE__ */ new Map();
-  for (const r of rows) {
-    const cur = best.get(r.id);
-    if (!cur || r.pt + r.ct < cur.pt + cur.ct) best.set(r.id, r);
-  }
-  return [...best.values()];
-}
-async function fetchOpenRouter() {
-  const res = await fetch(OR_API, { signal: AbortSignal.timeout(2e4) });
-  if (!res.ok) throw new Error("OpenRouter API: HTTP " + res.status);
-  const body = await res.json();
-  const list = [];
-  for (const m of body.data ?? []) {
-    const p = m.pricing ?? {};
-    list.push({
-      id: m.id,
-      name: m.name,
-      pt: parseFloat(p.prompt ?? "") || 0,
-      ct: parseFloat(p.completion ?? "") || 0
-    });
-  }
-  return list;
-}
-async function fetchZen() {
-  const res = await fetch(ZEN_MDX, { signal: AbortSignal.timeout(2e4) });
-  if (!res.ok) throw new Error("OpenCode-Zen-Doku: HTTP " + res.status);
-  const rows = parseZenMdx(await res.text());
-  if (rows.length === 0) throw new Error("Zen-Preisliste leer (Doku-Format ge\xE4ndert?)");
-  return rows;
-}
-function hashOf(or, zen) {
-  const parts = [];
-  for (const r of or) parts.push(`${r.id}:${r.pt}/${r.ct}`);
-  for (const r of zen) parts.push(`${r.id}:${r.pt}/${r.ct}`);
-  return parts.join("|");
-}
-function summary(rows, label) {
-  if (!rows.length) return label + ": keine Daten";
-  const free = rows.filter((r) => (r.pt || 0) + (r.ct || 0) === 0).length;
-  const paid = rows.filter((r) => (r.pt || 0) + (r.ct || 0) > 0).sort((a, b) => a.pt + a.ct - (b.pt + b.ct)).slice(0, 3).map((r) => `${r.id} (${fmt(r.pt)}/${fmt(r.ct)}$)`);
-  return `${label}: ${rows.length} Modelle, ${free} kostenlos; g\xFCnstigste bezahlt: ${paid.join(", ") || "\u2013"}`;
-}
-async function checkPrices() {
-  const [or, zen] = await Promise.all([fetchOpenRouter(), fetchZen()]);
-  return { or, zen, checkAt: Date.now(), error: null };
-}
 
 // src/ai.ts
 var OR_CHAT = "https://openrouter.ai/api/v1/chat/completions";
-function buildPrompt(or, zen, changed, model = "openrouter/free") {
-  const system = "Du bist ein Preis-Watchdog f\xFCr KI-Modellpreise. Antworte auf Deutsch in maximal 2 S\xE4tzen, kompakt und informativ. Nenne konkrete Zahlen, wenn relevant.";
-  const user = `Aktueller Preisstand (Preise pro 1M Tokens, Eingabe/Ausgabe):
-${summary(or, "OpenRouter")}
-${summary(zen, "OpenCode Zen")}
-${changed ? "Preise haben sich ge\xE4ndert." : "Preise unver\xE4ndert."}
-Fasse zusammen, was interessant oder ge\xE4ndert ist.`;
-  return JSON.stringify({
+function aiFailure(error) {
+  return { ok: false, at: Date.now(), error: "KI-Fehler: " + (error instanceof Error ? error.message : String(error)) };
+}
+async function aiDashboardSummary(apiKey, agents, changes, model = "openrouter/free") {
+  const payload = {
     model,
     messages: [
-      { role: "system", content: system },
-      { role: "user", content: user }
+      { role: "system", content: "Du fasst Modellpreis- und Agenten-Metadaten auf Deutsch in maximal zwei kurzen S\xE4tzen zusammen. Erfinde keine Benchmarks oder Kontingente." },
+      { role: "user", content: JSON.stringify({ agents: agents.map(metadataPayload), changes: changes.slice(0, 20) }) }
     ],
-    max_tokens: 240
-  });
-}
-async function aiComment(apiKey, or, zen, changed, model = "openrouter/free") {
-  const res = await fetch(OR_CHAT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-    body: buildPrompt(or, zen, changed, model),
-    signal: AbortSignal.timeout(3e4)
-  });
-  if (!res.ok) throw new Error("KI HTTP " + res.status);
-  const body = await res.json();
+    max_tokens: 180
+  };
+  const response = await fetch(OR_CHAT, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` }, body: JSON.stringify(payload), signal: AbortSignal.timeout(3e4) });
+  if (!response.ok) throw new Error(`KI HTTP ${response.status}`);
+  const body = await response.json();
   const text = body.choices?.[0]?.message?.content?.trim();
   if (!text) throw new Error("Leere KI-Antwort");
   return { ok: true, at: Date.now(), text };
 }
-function aiFailure(error) {
-  return { ok: false, at: Date.now(), error: "KI-Fehler: " + (error instanceof Error ? error.message : String(error)) };
-}
-function formatAiText(text) {
-  return text.replace(/\u202f/g, " ").replace(/\u00a0/g, " ");
-}
 
-// src/config.ts
-var import_os = require("os");
-var import_path = require("path");
-var import_fs = require("fs");
-function stripJsoncComments(src) {
-  let out = "";
-  let inString = false;
-  let i = 0;
-  while (i < src.length) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (inString) {
-      out += c;
-      if (c === "\\") {
-        out += next ?? "";
-        i += 2;
-        continue;
-      }
-      if (c === '"') inString = false;
-      i += 1;
-      continue;
-    }
-    if (c === '"') {
-      inString = true;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === "/" && next === "/") {
-      while (i < src.length && src[i] !== "\n") i += 1;
-      continue;
-    }
-    if (c === "/" && next === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i += 1;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
-}
-function parseJsonc(src) {
-  return JSON.parse(stripJsoncComments(src));
-}
-function readConfigFiles() {
-  const configs = [];
-  const home = (0, import_os.homedir)();
-  const candidates = [(0, import_path.join)(home, ".config", "opencode", "opencode.json"), (0, import_path.join)(home, ".config", "opencode", "opencode.jsonc")];
-  for (const file of candidates) {
+// src/providers/fetch-all.ts
+async function fetchAllProviders(loaders) {
+  const providers = Object.keys(loaders);
+  return Promise.all(providers.map(async (provider) => {
     try {
-      configs.push(parseJsonc((0, import_fs.readFileSync)(file, "utf8")));
-    } catch {
+      return { provider, offers: await loaders[provider](), checkedAt: Date.now(), stale: false };
+    } catch (error) {
+      return { provider, offers: [], checkedAt: Date.now(), stale: true, error: { kind: "network", message: error instanceof Error ? error.message : String(error) } };
     }
-  }
-  return configs;
-}
-function opencodeModelRefs() {
-  const refs = [];
-  for (const cfg of readConfigFiles()) {
-    for (const [provider, providerCfg] of Object.entries(cfg.provider ?? {})) {
-      for (const id of Object.keys(providerCfg.models ?? {})) refs.push({ provider, id });
-    }
-  }
-  return refs;
+  }));
 }
 
-// src/panel.ts
-var CSS = `
-:root { color-scheme: dark; }
-body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); margin: 0; padding: 16px 20px; }
-h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
-.meta { color: var(--vscode-descriptionForeground); margin-bottom: 12px; }
-.ok { color: var(--vscode-testing-iconPassed); }
-.err { color: var(--vscode-testing-iconFailed); }
-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-th { text-align: left; color: var(--vscode-descriptionForeground); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
-td { padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 13px; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.mine { color: var(--vscode-charts-blue); }
-.badge { display: inline-block; padding: 1px 8px; border-radius: 8px; font-size: 11px; }
-.badge.free { background: rgba(46,160,67,.18); color: var(--vscode-testing-iconPassed); }
-.badge.cheap { background: rgba(56,139,253,.18); color: var(--vscode-charts-blue); }
-.badge.mid { background: rgba(209,154,102,.18); color: var(--vscode-charts-yellow); }
-.badge.pricey { background: rgba(248,81,73,.18); color: var(--vscode-testing-iconFailed); }
-.ai { background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; }
-.ai b { display: block; margin-bottom: 4px; }
-.toolbar { margin-bottom: 12px; }
-button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; }
-button:hover { background: var(--vscode-button-hoverBackground); }
-`;
-function badgeOf(total) {
-  if (total === 0) return '<span class="badge free">kostenlos</span>';
-  if (total < 0.5) return '<span class="badge cheap">billig</span>';
-  if (total < 2) return '<span class="badge mid">mittel</span>';
-  return '<span class="badge pricey">Premium</span>';
+// src/providers/opencode-docs.ts
+var cells = (line) => line.split("|").slice(1, -1).map((cell) => cell.trim().replace(/`/g, ""));
+function idsFromDocument(mdx) {
+  const ids = /* @__PURE__ */ new Map();
+  for (const line of mdx.split("\n")) {
+    if (!line.startsWith("|")) continue;
+    const row = cells(line);
+    if (row.length >= 3 && /^https?:/.test(row[2] ?? "")) ids.set(norm(row[0] ?? ""), row[1] ?? "");
+  }
+  return ids;
 }
-function table(title, rows, mine) {
-  if (!rows.length) return `<h2>${title}</h2><p class="meta">keine Daten</p>`;
-  const sorted = rows.slice().sort((a, b) => a.pt + a.ct - (b.pt + b.ct));
-  const body = sorted.map((r) => {
-    const own = mine.has(r.id) ? ' <span class="mine">\u25CF</span>' : "";
-    const k = klass(r.pt, r.ct);
-    return `<tr><td>${esc(r.name)}${own}</td><td class="num">${fmt(r.pt)} $</td><td class="num">${fmt(r.ct)} $</td><td>${badgeOf(k.label === "kostenlos" ? 0 : r.pt + r.ct)}</td></tr>`;
-  }).join("");
-  return `<h2>${esc(title)} <span class="meta">(${rows.length})</span></h2>
-<table><thead><tr><th>Modell</th><th class="num">Eingabe / 1M</th><th class="num">Ausgabe / 1M</th><th>Klasse</th></tr></thead><tbody>${body}</tbody></table>`;
+function parsePricing(mdx, provider) {
+  const ids = idsFromDocument(mdx);
+  const offers2 = [];
+  let pricing = false;
+  for (const line of mdx.split("\n")) {
+    if (/^## (Pricing|Usage limits)/i.test(line)) {
+      pricing = true;
+      continue;
+    }
+    if (pricing && /^## /.test(line)) break;
+    if (!pricing || !line.startsWith("|")) continue;
+    const row = cells(line);
+    if (!row[0] || /^(Model|-+)/i.test(row[0])) continue;
+    const base = norm(row[0]);
+    const id = ids.get(base) ?? ids.get(base.replace(/-tokens$/, ""));
+    if (!id) continue;
+    offers2.push({ provider, id, name: row[0], pricing: { input: toUsd(row[1]), output: toUsd(row[2]), cacheRead: toUsd(row[3]), cacheWrite: toUsd(row[4]) }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding", "tools"] } });
+  }
+  return offers2;
 }
-function esc(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+var parseZenDocument = (mdx) => parsePricing(mdx, "opencode-zen");
+function parseGoDocument(mdx) {
+  const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month, then \$(\d+(?:\.\d+)?)\/month/i);
+  return { subscription: { firstMonthUsd: Number(match?.[1] ?? 0), monthlyUsd: Number(match?.[2] ?? 0) }, offers: parsePricing(mdx, "opencode-go") };
 }
-function panelHtml(state, ai2, mineOr, mineZen) {
-  const orFree = state.or.filter((r) => (r.pt || 0) + (r.ct || 0) === 0).length;
-  const zenFree = state.zen.filter((r) => (r.pt || 0) + (r.ct || 0) === 0).length;
-  const aiBox = ai2 ? ai2.ok && ai2.text ? `<div class="ai"><b class="ok">KI-Einsch\xE4tzung (kostenlos via OpenRouter Free)</b>${esc(formatAiText(ai2.text))}</div>` : `<div class="ai"><b class="err">KI nicht verf\xFCgbar</b>${esc(ai2.error ?? "unbekannter Fehler")}</div>` : '<div class="ai"><b>KI-Einsch\xE4tzung</b>wird beim n\xE4chsten Check erstellt \u2026</div>';
-  const status = state.error ? `<span class="err">${esc(state.error)}</span>` : `<span class="ok">OK</span>`;
-  return `<!DOCTYPE html>
-<html lang="de"><head><meta charset="utf-8"><style>${CSS}</style></head>
-<body>
-<h1>Preis-Watch</h1>
-<div class="meta">Stand ${time(state.checkAt)} \xB7 OpenRouter ${state.or.length} Modelle (${orFree} kostenlos) \xB7 OpenCode Zen ${state.zen.length} Modelle (${zenFree} kostenlos) \xB7 ${status}<br>
-<span class="meta">\u25CF = in deiner opencode-Konfiguration genutzt \xB7 Aktualisierung: st\xFCndlich \xB7 esc schlie\xDFt</span></div>
-<div class="toolbar"><button id="refresh">Jetzt aktualisieren</button></div>
-${aiBox}
-${table("OpenRouter (deine Modelle)", state.or.filter((r) => mineOr.has(r.id)), mineOr)}
-${table("OpenRouter (g\xFCnstigste bezahlt)", cheapest(state.or), mineOr)}
-${table("OpenCode Zen (deine Modelle)", state.zen.filter((r) => mineZen.has(r.id)), mineZen)}
-${table("OpenCode Zen (g\xFCnstigste bezahlt)", cheapest(state.zen), mineZen)}
-<script>
-const vscode = acquireVsCodeApi();
-document.getElementById("refresh").addEventListener("click", () => vscode.postMessage({ type: "refresh" }));
-</script>
-</body></html>`;
+async function fetchOpenCodeDocument(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(2e4) });
+  if (!response.ok) throw new Error(`OpenCode HTTP ${response.status}`);
+  return response.text();
 }
-function cheapest(rows) {
-  return rows.filter((r) => (r.pt || 0) + (r.ct || 0) > 0).sort((a, b) => a.pt + a.ct - (b.pt + b.ct)).slice(0, 8);
+
+// src/providers/openrouter.ts
+function parseOpenRouterModels(body) {
+  return (body.data ?? []).map((model) => {
+    const parameters = new Set(model.supported_parameters ?? []);
+    const inputModalities = model.architecture?.input_modalities ?? ["text"];
+    const description = model.description?.toLowerCase() ?? "";
+    const coding = /cod(e|ing|program|software)/.test(description);
+    return {
+      provider: "openrouter",
+      id: model.id,
+      name: model.name,
+      description: model.description,
+      pricing: {
+        input: usdPerMillion(model.pricing?.prompt),
+        output: usdPerMillion(model.pricing?.completion),
+        request: Number.parseFloat(model.pricing?.request ?? "") || 0,
+        cacheRead: usdPerMillion(model.pricing?.input_cache_read),
+        cacheWrite: usdPerMillion(model.pricing?.input_cache_write),
+        image: Number.parseFloat(model.pricing?.image ?? "") || 0,
+        webSearch: Number.parseFloat(model.pricing?.web_search ?? "") || 0
+      },
+      capabilities: {
+        inputModalities,
+        outputModalities: model.architecture?.output_modalities ?? ["text"],
+        tools: parameters.has("tools"),
+        structuredOutput: parameters.has("structured_outputs") || parameters.has("response_format"),
+        reasoning: parameters.has("reasoning") || parameters.has("include_reasoning"),
+        contextLength: model.context_length ?? null,
+        purposes: [.../* @__PURE__ */ new Set(["language", "allround", ...coding ? ["coding", "tools"] : [], ...inputModalities.includes("image") ? ["vision"] : [], ...parameters.has("reasoning") ? ["reasoning"] : []])]
+      },
+      benchmarks: model.benchmarks ? { source: "OpenRouter / Artificial Analysis", intelligence: model.benchmarks.intelligence_index, coding: model.benchmarks.coding_index, agentic: model.benchmarks.agentic_index } : void 0
+    };
+  });
+}
+async function fetchOpenRouterCatalog() {
+  const response = await fetch("https://openrouter.ai/api/v1/models?output_modalities=all", { signal: AbortSignal.timeout(2e4) });
+  if (!response.ok) throw new Error(`OpenRouter HTTP ${response.status}`);
+  return parseOpenRouterModels(await response.json());
 }
 
 // src/extension.ts
-var KEY_STORE = "priceWatch.openrouterKey";
-var LAST_HASH = "priceWatch.lastHash";
-var LAST_AI = "priceWatch.lastAiAt";
-var OPEN_COMMAND = "priceWatch.open";
-var statusBar;
+var ZEN_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/zen.mdx";
+var GO_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx";
+var HISTORY_KEY = "priceWatch.history.v2";
+var SNAPSHOT_KEY = "priceWatch.snapshots.v2";
+var secretKey = (provider) => `priceWatch.account.${provider}`;
 var panel;
-var prices = { or: [], zen: [], checkAt: null, error: null };
-var ai = null;
-var checkRunning = false;
-var timer;
-function mineIds() {
-  const or = /* @__PURE__ */ new Set();
-  const zen = /* @__PURE__ */ new Set();
-  for (const ref of opencodeModelRefs()) {
-    if (ref.provider === "openrouter") or.add(ref.id);
-    else if (ref.provider === "opencode" || ref.provider === "opencode-go") zen.add(ref.id);
+var statusBar;
+var running;
+var state = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 };
+function localAgents() {
+  const directories = [(0, import_path.join)((0, import_os.homedir)(), ".config", "opencode", "agents"), ...(vscode.workspace.workspaceFolders ?? []).map((folder) => (0, import_path.join)(folder.uri.fsPath, ".opencode", "agents"))];
+  const agents = [];
+  for (const directory of directories) try {
+    for (const file of (0, import_fs.readdirSync)(directory)) if (file.endsWith(".md")) agents.push({ ...parseAgentMarkdown(file, (0, import_fs.readFileSync)((0, import_path.join)(directory, file), "utf8")), source: (0, import_path.join)(directory, file) });
+  } catch {
   }
-  return { or, zen };
-}
-function updateStatusBar() {
-  if (!statusBar) return;
-  const hasData = prices.checkAt !== null;
-  const status = prices.error ? "!" : hasData ? "OK" : "\u2026";
-  const aiState = ai ? ai.ok ? "KI ok" : "KI fehlt" : "KI -";
-  statusBar.text = `$(pulse) Preise ${time(prices.checkAt)} ${status}`;
-  statusBar.tooltip = [
-    "Preis-Watch",
-    `Stand: ${time(prices.checkAt)}`,
-    `OpenRouter: ${prices.or.length} Modelle`,
-    `OpenCode Zen: ${prices.zen.length} Modelle`,
-    aiState,
-    prices.error ?? "",
-    "Befehl: Preis-Watch \xF6ffnen"
-  ].filter(Boolean).join("\n");
-  if (prices.error) statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
-  else statusBar.backgroundColor = void 0;
-  statusBar.show();
+  return agents;
 }
 function refreshPanel() {
-  if (!panel) return;
-  const { or, zen } = mineIds();
-  panel.webview.html = panelHtml(prices, ai, or, zen);
+  if (panel) panel.webview.html = panelHtml(state);
 }
-async function activate(context) {
-  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  statusBar.command = OPEN_COMMAND;
-  context.subscriptions.push(statusBar);
-  updateStatusBar();
-  context.subscriptions.push(
-    vscode.commands.registerCommand(OPEN_COMMAND, () => {
-      if (panel) {
-        panel.reveal();
-        refreshPanel();
-        return;
-      }
-      panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, {
-        enableScripts: true,
-        retainContextWhenHidden: true
-      });
-      panel.onDidDispose(() => {
-        panel = void 0;
-      });
-      panel.webview.onDidReceiveMessage((msg) => {
-        if (msg.type === "refresh") void runCheck(context, true);
-      });
-      refreshPanel();
-    }),
-    vscode.commands.registerCommand("priceWatch.refresh", () => void runCheck(context, true)),
-    vscode.commands.registerCommand("priceWatch.setKey", async () => {
-      const current = await context.secrets.get(KEY_STORE);
-      const input = await vscode.window.showInputBox({
-        title: "OpenRouter-API-Key (f\xFCr die kostenlose Preis-KI)",
-        prompt: "https://openrouter.ai/keys \u2014 wird sicher in VS Code Secrets gespeichert",
-        password: true,
-        placeHolder: "sk-or-\u2026",
-        value: current ?? ""
-      });
-      if (input === void 0) return;
-      if (!input.trim()) {
-        await context.secrets.delete(KEY_STORE);
-        void vscode.window.showInformationMessage("OpenRouter-Key entfernt \u2014 die KI-Analyse ist jetzt deaktiviert.");
-        return;
-      }
-      await context.secrets.store(KEY_STORE, input.trim());
-      void vscode.window.showInformationMessage("OpenRouter-Key gespeichert. Preis-KI ist aktiv.");
-      void runCheck(context, true);
-    })
-  );
-  void runCheck(context, false);
-  const intervalHours = Math.max(1, vscode.workspace.getConfiguration("priceWatch").get("checkIntervalHours", 1));
-  timer = setInterval(() => void runCheck(context, false), intervalHours * 60 * 60 * 1e3);
-  context.subscriptions.push({ dispose: () => clearInterval(timer) });
+function updateStatus() {
+  statusBar.text = `$(pulse) Preise ${state.snapshots.reduce((sum, s) => sum + s.offers.length, 0)} \xB7 ${state.history.length} \u0394`;
+  statusBar.tooltip = state.snapshots.map((s) => `${s.provider}: ${s.error ? s.error.message : `${s.offers.length} Modelle`}`).join("\n");
+  statusBar.show();
 }
-async function runCheck(context, manual) {
-  if (checkRunning) return;
-  checkRunning = true;
-  const prevHash = context.globalState.get(LAST_HASH) ?? null;
+async function refresh(context, manual) {
+  if (running) return running;
+  running = (async () => {
+    const previous = state.snapshots.flatMap((snapshot) => snapshot.offers);
+    const snapshots = await fetchAllProviders({
+      openrouter: fetchOpenRouterCatalog,
+      "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
+      "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers
+    });
+    const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers);
+    const changes = diffOffers(previous, successful);
+    state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() };
+    const aiKey = await context.secrets.get(secretKey("openrouter"));
+    if (aiKey && (manual || changes.length > 0)) try {
+      state.ai = await aiDashboardSummary(aiKey, state.agents, changes, vscode.workspace.getConfiguration("priceWatch").get("aiModel", "openrouter/free"));
+    } catch (error) {
+      state.ai = aiFailure(error);
+    }
+    await context.globalState.update(HISTORY_KEY, state.history);
+    await context.globalState.update(SNAPSHOT_KEY, snapshots);
+    if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch \xF6ffnen?`, "\xD6ffnen").then((choice) => {
+      if (choice) void vscode.commands.executeCommand("priceWatch.open");
+    });
+    updateStatus();
+    refreshPanel();
+  })().finally(() => {
+    running = void 0;
+  });
+  return running;
+}
+async function connectAccount(context) {
+  const provider = await vscode.window.showQuickPick(["openrouter", "opencode-zen", "opencode-go", "claude-code"], { title: "Konto ausdr\xFCcklich verbinden" });
+  if (!provider) return;
+  const token = await vscode.window.showInputBox({ title: `${provider} Zugang`, password: true, prompt: "Wird nur im VS Code Secret Store dieses Ger\xE4ts gespeichert" });
+  if (!token) return;
+  await context.secrets.store(secretKey(provider), token.trim());
+  let account;
   try {
-    prices = await checkPrices();
-    const nextHash = hashOf(prices.or, prices.zen);
-    if (prevHash !== null && prevHash !== nextHash) {
-      void vscode.window.showInformationMessage(
-        "Preis\xE4nderung bei OpenRouter/OpenCode Zen \u2014 \xF6ffne den Preis-Watch f\xFCr Details."
-      );
-    }
-    await context.globalState.update(LAST_HASH, nextHash);
-    const config = vscode.workspace.getConfiguration("priceWatch");
-    const key = await context.secrets.get(KEY_STORE);
-    const lastAi = context.globalState.get(LAST_AI) ?? 0;
-    const aiEveryMs = Math.max(1, config.get("aiEveryHours", 6)) * 60 * 60 * 1e3;
-    const aiDue = Date.now() - lastAi >= aiEveryMs;
-    const changed = prevHash !== null && prevHash !== nextHash;
-    if (key && (aiDue || changed || manual)) {
-      try {
-        ai = await aiComment(key, prices.or, prices.zen, changed, config.get("aiModel", "openrouter/free"));
-      } catch (error) {
-        ai = aiFailure(error);
-      }
-      await context.globalState.update(LAST_AI, ai.at);
-    }
+    account = provider === "openrouter" ? await fetchOpenRouterAccount(token.trim()) : unavailableAccount(provider, "Verbunden \xB7 pers\xF6nliche Usage-API nicht verf\xFCgbar");
   } catch (error) {
-    prices.error = "Check fehlgeschlagen: " + (error instanceof Error ? error.message : String(error));
-  } finally {
-    checkRunning = false;
+    await context.secrets.delete(secretKey(provider));
+    void vscode.window.showErrorMessage(`Verbindung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`);
+    return;
   }
-  updateStatusBar();
+  state.accounts = [...state.accounts.filter((item) => item.provider !== provider), account];
   refreshPanel();
 }
+async function activate(context) {
+  state.history = context.globalState.get(HISTORY_KEY) ?? [];
+  state.snapshots = context.globalState.get(SNAPSHOT_KEY) ?? [];
+  context.globalState.setKeysForSync([HISTORY_KEY, SNAPSHOT_KEY]);
+  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  statusBar.command = "priceWatch.open";
+  context.subscriptions.push(statusBar);
+  context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => {
+    if (!panel) {
+      panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
+      panel.onDidDispose(() => panel = void 0);
+      panel.webview.onDidReceiveMessage((message) => {
+        if (message?.type === "connect") void connectAccount(context);
+      });
+    } else panel.reveal();
+    refreshPanel();
+  }), vscode.commands.registerCommand("priceWatch.refresh", () => refresh(context, true)), vscode.commands.registerCommand("priceWatch.setKey", () => connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", () => connectAccount(context)));
+  const hours = Math.max(1, vscode.workspace.getConfiguration("priceWatch").get("checkIntervalHours", 1));
+  const timer = setInterval(() => void refresh(context, false), hours * 36e5);
+  context.subscriptions.push({ dispose: () => clearInterval(timer) });
+  updateStatus();
+  void refresh(context, false);
+}
 function deactivate() {
-  clearInterval(timer);
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
