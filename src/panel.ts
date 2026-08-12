@@ -62,12 +62,15 @@ function renderAgentGroups(items: AgentAssessment[]): string {
 
 function accountValue(account: AccountStatus): string {
   if (account.remainingUsd !== undefined) return `${money(account.remainingUsd)} verfügbar`
+  // Kontingentangaben ohne Dollarwert (OpenCode Go) stehen in message und
+  // duerfen nicht von der generischen Zeile verdeckt werden.
+  if (account.message) return account.message
   if (account.state === "available") return "Verbunden · kein festes Schlüssellimit"
-  return account.message ?? "Verbrauch nicht automatisch abrufbar"
+  return "Verbrauch nicht automatisch abrufbar"
 }
 function renderAccountSummary(account: AccountStatus): string {
   const usage = [["Heute",account.dailyUsd],["Woche",account.weeklyUsd],["Monat",account.monthlyUsd]].filter((item): item is [string,number]=>item[1] !== undefined).map(([period,value])=>`${period} ${money(value)}`).join(" · ")
-  return `<div class="account-summary"><div><strong>${esc(account.provider)}</strong>${account.label ? `<small>${esc(account.label)}</small>` : ""}${usage ? `<small class="account-usage">${esc(usage)}</small>` : ""}</div><span class="status status-${account.state}">${esc(accountValue(account))}</span></div>`
+  return `<div class="account-summary"><div><strong>${esc(account.provider)}</strong>${account.label ? `<small>${esc(account.label)}</small>` : ""}${usage ? `<small class="account-usage">${esc(usage)}</small>` : ""}${account.resetAt ? `<small class="account-usage">Reset ${esc(new Date(account.resetAt).toLocaleString("de-DE",{ dateStyle:"short", timeStyle:"short" }))}</small>` : ""}</div><span class="status status-${account.state}">${esc(accountValue(account))}</span></div>`
 }
 function metric(value: string, label: string, tone=""): string { return `<div class="account-metric ${tone}"><strong>${value}</strong><small>${label}</small></div>` }
 function renderManagedKey(key: OpenRouterManagedKey): string {
