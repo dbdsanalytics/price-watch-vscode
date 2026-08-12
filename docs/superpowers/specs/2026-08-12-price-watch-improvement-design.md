@@ -53,6 +53,8 @@ Der Modellabruf schließt alle Ausgabemodalitäten ein. Kostenlose Varianten ble
 
 Bei ausdrücklicher Kontoverbindung werden je nach Schlüsselberechtigung Guthaben, Gesamtverbrauch, täglicher, wöchentlicher und monatlicher Verbrauch sowie Schlüssel-Limits geladen. Ein Management-Key ist nur für Funktionen anzufordern, die ihn tatsächlich benötigen.
 
+Preis-Watch behandelt den normalen API-Key und den Management Key als zwei getrennte Verbindungen. Der normale API-Key bleibt für das kostenlose KI-Fazit und den Status dieses einzelnen Schlüssels zuständig. Der Management Key wird ausschließlich lesend für `GET /api/v1/credits` und `GET /api/v1/keys` verwendet. Damit zeigt die Extension gekauftes Gesamtguthaben, Gesamtverbrauch, berechnetes Restguthaben sowie Limit, Restlimit und Tages-, Wochen- und Monatsverbrauch jedes vorhandenen API-Keys. Schreibende Management-Funktionen zum Erstellen, Ändern, Deaktivieren oder Löschen von Schlüsseln sind ausdrücklich nicht Teil der Extension.
+
 ### OpenCode Zen
 
 Die offizielle Zen-Dokumentation liefert Modell-IDs und Pay-as-you-go-Preise pro 1 Mio. Tokens. Zusätzlich werden Cache-Preise und Deprecation-Daten erfasst, soweit vorhanden.
@@ -185,6 +187,8 @@ Empfehlungen vergleichen nur Modelle, die die für den Agentenzweck erforderlich
 Jeder Anbieter wird innerhalb der Extension ausdrücklich und getrennt verbunden. Die Extension übernimmt keine bestehenden Zugangsdaten automatisch.
 
 Verbindungen können getestet, erneuert und entfernt werden. Secrets liegen ausschließlich im VS Code Secret Store. Die Oberfläche zeigt nur maskierte Kennungen, Berechtigungsumfang und Zeitpunkt des letzten erfolgreichen Abrufs.
+
+OpenRouter bietet in diesem Bereich getrennte Aktionen für „API-Key verbinden“ und „Management Key verbinden“. Die Management-Verbindung zeigt ihren Nur-Lesen-Zweck vor der Eingabe eindeutig an. Ein fehlender individueller Key-Grenzwert wird als „kein festes Schlüssellimit“ bezeichnet und niemals als „unklar“, null oder unbegrenzt interpretiert.
 
 Der Bereich unterstützt:
 
