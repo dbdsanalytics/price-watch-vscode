@@ -9,6 +9,7 @@ import type { AgentMetadata } from "./agents/discovery"
 import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
 import { mergeHistory } from "./domain/history"
+import { enrichProviderBenchmarks } from "./domain/benchmarks"
 import type { ModelOffer } from "./domain/model"
 import type { ProviderSnapshot } from "./domain/provider"
 import { panelHtml, type DashboardState } from "./panel"
@@ -54,11 +55,11 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
   if (running) return running
   running = (async () => {
     const previous = state.snapshots.flatMap((snapshot) => snapshot.offers)
-    const snapshots = await fetchAllProviders({
+    const snapshots = enrichProviderBenchmarks(await fetchAllProviders({
       openrouter: fetchOpenRouterCatalog,
       "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
       "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers,
-    })
+    }))
     const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
     const changes = diffOffers(previous, successful)
     state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() }

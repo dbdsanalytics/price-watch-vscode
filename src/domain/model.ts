@@ -27,6 +27,7 @@ export interface BenchmarkScores {
   agentic?: number
   source: string
   asOf?: string
+  match?: "direct" | "base-model" | "local"
 }
 
 export interface ModelOffer {

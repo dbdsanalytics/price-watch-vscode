@@ -29,7 +29,7 @@ export function parseOpenRouterModels(body: { data?: ApiModel[] }): ModelOffer[]
         reasoning: parameters.has("reasoning") || parameters.has("include_reasoning"), contextLength: model.context_length ?? null,
         purposes: [...new Set(["language", "allround", ...(coding ? ["coding", "tools"] : []), ...(inputModalities.includes("image") ? ["vision"] : []), ...(parameters.has("reasoning") ? ["reasoning"] : [])])] as ModelOffer["capabilities"]["purposes"],
       },
-      benchmarks: model.benchmarks?.artificial_analysis ? { source: "OpenRouter / Artificial Analysis", intelligence: model.benchmarks.artificial_analysis.intelligence_index, coding: model.benchmarks.artificial_analysis.coding_index, agentic: model.benchmarks.artificial_analysis.agentic_index } : undefined,
+      benchmarks: model.benchmarks?.artificial_analysis ? { source: "OpenRouter / Artificial Analysis", match: "direct", intelligence: model.benchmarks.artificial_analysis.intelligence_index, coding: model.benchmarks.artificial_analysis.coding_index, agentic: model.benchmarks.artificial_analysis.agentic_index } : undefined,
     }
   })
 }

@@ -31,4 +31,7 @@ test("renders a semantic color system and structured agent and account sections"
   expect(html).toContain("75 $</strong><small>Verfügbar")
   expect(html).toContain("Coding key")
   expect(html).toContain("data-action=\"connect-management\"")
+  expect(html).toContain("Benchmark")
+  expect(html).toContain("<b>Coding</b> 90")
+  expect(html).toContain("Öffentlich bewertet")
 })
