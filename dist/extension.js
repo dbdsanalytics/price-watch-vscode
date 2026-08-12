@@ -223,9 +223,20 @@ var vendors = [
 var baseId = (id) => id.replace(/:batch$/, "").replace(/:free$/, "").replace(/-free$/, "");
 var ownerFor = (id) => vendors.find(([pattern]) => pattern.test(baseId(id)))?.[1];
 var inherited = (scores) => ({ ...scores, source: `${scores.source} \xB7 identisches Basismodell`, match: "base-model" });
-function enrichProviderBenchmarks(snapshots) {
-  const openRouter = snapshots.find((snapshot) => snapshot.provider === "openrouter")?.offers ?? [];
-  return snapshots.map((snapshot) => snapshot.provider === "openrouter" ? snapshot : { ...snapshot, offers: snapshot.offers.map((offer) => {
+function enrichProviderBenchmarks(snapshots, api) {
+  const detailsByModel = /* @__PURE__ */ new Map();
+  for (const item of api?.items ?? []) {
+    const details = detailsByModel.get(item.modelId) ?? [];
+    details.push({ name: item.benchmark, score: item.score, costPerTaskUsd: item.costPerTaskUsd, sampleCount: item.sampleCount, lastRunAt: item.lastRunAt });
+    detailsByModel.set(item.modelId, details);
+  }
+  const withApi = snapshots.map((snapshot) => snapshot.provider !== "openrouter" ? snapshot : { ...snapshot, offers: snapshot.offers.map((offer) => {
+    const details = detailsByModel.get(offer.benchmarkId ?? offer.id);
+    if (!details?.length) return offer;
+    return { ...offer, benchmarks: { ...offer.benchmarks, source: offer.benchmarks?.source ?? "OpenRouter Benchmarks", match: "direct", asOf: api?.asOf, details } };
+  }) });
+  const openRouter = withApi.find((snapshot) => snapshot.provider === "openrouter")?.offers ?? [];
+  return withApi.map((snapshot) => snapshot.provider === "openrouter" ? snapshot : { ...snapshot, offers: snapshot.offers.map((offer) => {
     if (offer.benchmarks) return offer;
     const base = baseId(offer.id), owner = ownerFor(base);
     const candidates = openRouter.filter((item) => item.benchmarks && baseId(item.id.split("/").at(-1) ?? item.id) === base).filter((item) => !owner || item.id.startsWith(`${owner}/`));
@@ -233,6 +244,27 @@ function enrichProviderBenchmarks(snapshots) {
     if (candidates.length === 0 || !owner && owners.size !== 1) return offer;
     return { ...offer, benchmarks: inherited(candidates[0].benchmarks) };
   }) });
+}
+
+// src/domain/benchmark-cache.ts
+var BENCHMARK_CACHE_KEY = "priceWatch.openrouterBenchmarks.v1";
+var BENCHMARK_CACHE_TTL_MS = 864e5;
+function valid(value) {
+  if (!value || typeof value !== "object") return false;
+  const item = value;
+  return typeof item.fetchedAt === "number" && Array.isArray(item.items);
+}
+async function loadBenchmarks(storage, key, forceRefresh, loader, now = Date.now()) {
+  const value = storage.get(BENCHMARK_CACHE_KEY);
+  const cached = valid(value) ? value : null;
+  if (cached && !forceRefresh && now - cached.fetchedAt < BENCHMARK_CACHE_TTL_MS) return cached;
+  try {
+    const fresh = await loader(key);
+    await storage.update(BENCHMARK_CACHE_KEY, fresh);
+    return fresh;
+  } catch {
+    return cached;
+  }
 }
 
 // src/panel.ts
@@ -283,7 +315,9 @@ function benchmarkCell(offer) {
   if (!scores) return `<div class="benchmark benchmark-missing"><strong>Keine Daten</strong><small>Noch nicht belastbar bewertet</small></div>`;
   const values = [["Intelligenz", scores.intelligence], ["Coding", scores.coding], ["Agentic", scores.agentic]].filter((item) => item[1] !== void 0);
   const provenance = scores.match === "base-model" ? "Identisches Basismodell" : scores.match === "local" ? "Lokaler Praxistest" : "\xD6ffentlich bewertet";
-  return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${values.map(([label, value]) => `<span><b>${label}</b> ${value}</span>`).join("")}</div><small>${provenance}</small></div>`;
+  const detailLabel = { gpqa_diamond: "GPQA Diamond", tau_bench_verified_airline: "\u03C4\xB2-Bench Airline", search_browsecomp: "BrowseComp", search_dsqa: "DeepSearchQA", search_hle: "Search HLE", search_widesearch: "WideSearch" };
+  const details = (scores.details ?? []).map((detail) => `<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>${detail.sampleCount !== void 0 ? `<small>${detail.sampleCount} Aufgaben</small>` : ""}${detail.costPerTaskUsd !== void 0 ? `<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>` : ""}</article>`).join("");
+  return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${values.map(([label, value]) => `<span><b>${label}</b> ${value}</span>`).join("")}</div>${details ? `<details class="benchmark-details"><summary>${scores.details?.length} Einzelbenchmarks</summary>${details}</details>` : ""}<small>${provenance}</small></div>`;
 }
 function renderRanks(offers) {
   return Object.entries(labels).map(([purpose, label], index) => {
@@ -355,7 +389,7 @@ function panelHtml(state2) {
   <section class="view" id="accounts" hidden><div class="page-head"><div><h1>Konten &amp; Limits</h1><p>Secrets bleiben ausschlie\xDFlich im lokalen VS Code Secret Store.</p></div></div><div class="provider-sections">${renderOpenRouterSection(state2.accounts, state2.openRouterManagement)}${renderProviderSection("opencode-zen", state2.accounts)}${renderProviderSection("opencode-go", state2.accounts)}</div></section></main><script nonce="${nonce}">${SCRIPT}</script></body></html>`;
 }
 var SCRIPT = `const vscode=acquireVsCodeApi();const show=id=>{document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==id);document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));scrollTo(0,0)};document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.view)));document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>vscode.postMessage({type:b.dataset.action})));const filter=()=>{const q=search.value.toLowerCase(),p=provider.value,c=price.value,u=purpose.value;document.querySelectorAll('[data-model]').forEach(r=>r.hidden=!(r.dataset.model.includes(q)&&(!p||r.dataset.provider===p)&&(!c||r.dataset.price===c)&&(!u||r.dataset.model.includes(u))))};['search','provider','price','purpose'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',filter));`;
-var BENCHMARK_CSS = `.benchmark{min-width:180px}.benchmark>div{display:flex;flex-wrap:wrap;gap:3px}.benchmark span{padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--violet) 12%,transparent);font-size:.78em;white-space:nowrap}.benchmark small{display:block;margin-top:3px;color:var(--muted)}.benchmark-base-model small{color:var(--cyan)}.benchmark-local small{color:var(--yellow)}.benchmark-missing strong{color:var(--muted)}`;
+var BENCHMARK_CSS = `.benchmark{min-width:190px}.benchmark>div{display:flex;flex-wrap:wrap;gap:3px}.benchmark>div>span{padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--violet) 12%,transparent);font-size:.78em;white-space:nowrap}.benchmark>small{display:block;margin-top:3px;color:var(--muted)}.benchmark-base-model>small{color:var(--cyan)}.benchmark-local>small{color:var(--yellow)}.benchmark-missing strong{color:var(--muted)}.benchmark-details{margin-top:4px}.benchmark-details summary{color:var(--cyan);cursor:pointer;font-size:.82em}.benchmark-details article{display:grid;grid-template-columns:1fr auto;gap:0 8px;padding:3px 0;border-top:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.benchmark-details article>small{grid-column:1/-1;color:var(--muted);font-size:.75em}`;
 var CSS = `
 :root{color-scheme:light dark;--violet:#a78bfa;--blue:#60a5fa;--cyan:#2dd4bf;--pink:#f472b6;--yellow:#facc15;--green:#4ade80;--orange:#fb923c;--muted:var(--vscode-descriptionForeground)}*{box-sizing:border-box}body{margin:0;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-size)/1.4 var(--vscode-font-family)}button,input,select{font:inherit}button{border:1px solid var(--vscode-button-border,var(--vscode-panel-border));border-radius:6px;padding:5px 9px;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);cursor:pointer}.topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:24px;min-height:44px;padding:0 16px;border-bottom:1px solid var(--vscode-panel-border);background:color-mix(in srgb,var(--vscode-editor-background) 94%,transparent);backdrop-filter:blur(12px)}.topbar button{border:0;padding:11px 0;background:none;color:var(--muted)}.topbar .brand{font-weight:750;color:var(--vscode-foreground)}.topbar nav{display:flex;gap:20px}.topbar nav button.active{color:var(--violet);box-shadow:inset 0 -2px var(--violet)}.live{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--muted)}.live i{width:8px;height:8px;border-radius:50%;background:var(--green)}main{padding:12px 16px}.view[hidden],[data-model][hidden]{display:none}h1,h2,h3,h4,p{margin:0}h1{font-size:1.55em}h2{font-size:1.05em}.page-head{margin:5px 0 12px}.page-head p,.empty{color:var(--muted)}.metrics{display:flex;flex-wrap:wrap;gap:8px 28px;padding:2px 2px 10px;color:var(--muted)}.metrics span{display:flex;align-items:baseline;gap:5px}.metrics strong{font-size:1.4em;color:var(--vscode-foreground)}.insight{display:flex;gap:8px;padding:7px 10px;margin-bottom:8px;border-left:3px solid var(--violet);border-radius:5px;background:color-mix(in srgb,var(--violet) 15%,var(--vscode-editorWidget-background))}.insight strong{white-space:nowrap;color:#d8b4fe}.dashboard{display:grid;grid-template-columns:minmax(360px,2fr) minmax(220px,1fr) minmax(220px,1fr);gap:8px;align-items:start}.card{min-width:0;padding:10px;border:1px solid var(--vscode-panel-border);border-radius:9px;background:var(--vscode-editorWidget-background)}.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}.card-head button,.more{color:var(--violet);background:none}.purpose-block{border-top:1px solid color-mix(in srgb,var(--vscode-panel-border) 60%,transparent)}.purpose-block:first-of-type{border-top:0}.purpose-block summary{display:flex;align-items:center;gap:8px;padding:7px 2px;cursor:pointer}.purpose-block summary span{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:color-mix(in srgb,currentColor 16%,transparent);font-weight:800}.purpose-block summary strong{font-size:1.12em}.purpose-coding{color:var(--blue)}.purpose-language{color:var(--cyan)}.purpose-reasoning{color:var(--violet)}.purpose-vision{color:var(--pink)}.purpose-tools{color:var(--yellow)}.purpose-allround{color:#94a3b8}.rank-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 0 8px 30px;color:var(--vscode-foreground)}.rank-column{padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.rank-column h4{display:flex;align-items:center;gap:6px}.rank-column h4 i{width:8px;height:8px;border-radius:50%}.price-free h4{color:var(--green)}.price-free h4 i{background:var(--green)}.price-paid h4{color:var(--orange)}.price-paid h4 i{background:var(--orange)}.rank-column ol{margin:4px 0 0;padding-left:20px}.rank-column li{padding:2px 0}.rank-column li strong,.rank-column li small{display:block}.rank-column li small{color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:4px;width:max-content;border:1px solid color-mix(in srgb,currentColor 32%,transparent);border-radius:999px;padding:1px 6px;background:color-mix(in srgb,currentColor 13%,transparent);font-size:.8em}.badge b{font-size:.85em}.provider i{width:6px;height:6px;border-radius:2px;background:currentColor}.provider-openrouter{color:var(--violet)}.provider-opencode-zen{color:var(--cyan)}.provider-opencode-go{color:var(--blue)}.agent-preview{padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.agent-preview .agent-model span,.agent-preview .agent-identity .badge{display:none}.agent-preview .agent-result small{display:none}.more{width:100%;margin-top:6px}.agent-groups{display:grid;gap:12px}.agent-group{overflow:hidden;border:1px solid var(--vscode-panel-border);border-radius:10px;background:var(--vscode-editorWidget-background)}.agent-group>header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--vscode-panel-border)}.agent-group>header p{color:var(--muted);font-size:.88em}.agent-group>header>span{min-width:28px;padding:3px 8px;border-radius:999px;text-align:center;background:var(--vscode-badge-background)}.agent-group-attention{border-left:3px solid var(--orange)}.agent-group-suitable{border-left:3px solid var(--green)}.agent-group-unknown{border-left:3px solid #94a3b8}.agent-row{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(240px,1.3fr) minmax(190px,1fr);gap:12px;align-items:center;min-width:0;padding:8px 12px;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 55%,transparent)}.agent-row:last-child{border-bottom:0}.agent-identity,.agent-model,.agent-result{min-width:0}.agent-identity{display:flex;align-items:center;gap:8px}.agent-model span,.agent-result small{display:block;color:var(--muted);font-size:.82em}.agent-model strong{display:block;overflow-wrap:anywhere}.agent-result{text-align:right}.status{font-weight:700}.status-suitable,.status-available,.key-state-active{color:var(--green)}.status-alternative-available,.status-expensive,.status-low{color:var(--orange)}.status-deprecated,.status-unsuitable,.status-exhausted,.key-state-disabled,.key-state-expired{color:var(--vscode-errorForeground)}.status-unknown,.status-unavailable,.status-disconnected{color:var(--muted)}.group-empty{padding:12px}.filters{display:grid;grid-template-columns:minmax(190px,1fr) repeat(3,minmax(130px,auto));gap:6px;margin-bottom:8px}.filters input,.filters select{min-width:0;padding:7px 8px;border:1px solid var(--vscode-input-border,var(--vscode-panel-border));border-radius:6px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}.table-wrap{overflow:auto;border:1px solid var(--vscode-panel-border);border-radius:9px}table{width:100%;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid var(--vscode-panel-border);text-align:left;vertical-align:middle}th{position:sticky;top:44px;z-index:2;background:var(--vscode-editorWidget-background);color:var(--muted)}td>strong,td>small{display:block}td>small{color:var(--muted)}.capabilities{display:flex;flex-wrap:wrap;gap:4px}.price{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.price:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.price-free{color:var(--green)}.price-paid{color:var(--orange)}.price-unknown{color:var(--muted)}.provider-sections{display:grid;gap:12px}.account-provider-section{overflow:hidden;border:1px solid var(--vscode-panel-border);border-left:3px solid currentColor;border-radius:10px;background:var(--vscode-editorWidget-background);color:var(--vscode-foreground)}.account-provider-section>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid var(--vscode-panel-border)}.account-provider-section>header p{color:var(--muted)}.provider-title{display:flex;align-items:center;gap:8px;font-size:1.18em;font-weight:750}.provider-title i{width:10px;height:10px;border-radius:3px;background:currentColor}.account-provider-section.provider-openrouter{border-left-color:var(--violet)}.account-provider-section.provider-opencode-zen{border-left-color:var(--cyan)}.account-provider-section.provider-opencode-go{border-left-color:var(--blue)}.account-provider-section.provider-openrouter .provider-title{color:var(--violet)}.account-provider-section.provider-opencode-zen .provider-title{color:var(--cyan)}.account-provider-section.provider-opencode-go .provider-title{color:var(--blue)}.connection-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px}.connection{min-width:0;padding:9px 10px;border:1px solid var(--vscode-panel-border);border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.connection-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.connection-head span{display:block;color:var(--muted);font-size:.84em}.account-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-top:8px}.account-summary small{display:block;color:var(--muted)}.account-summary .status{max-width:55%;text-align:right;overflow-wrap:anywhere}.management-state{margin-top:8px}.account-metrics{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px;padding:0 12px 10px}.account-metric{padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.account-metric strong,.account-metric small{display:block}.account-metric strong{font-size:1.25em}.account-metric small{color:var(--muted)}.metric-good strong{color:var(--green)}.metric-warn strong{color:var(--orange)}.managed-keys{padding:0 12px 12px}.managed-keys>header{display:flex;align-items:end;justify-content:space-between;gap:8px;padding:4px 0 7px}.managed-keys>header span{color:var(--muted);font-size:.84em}.managed-key{display:grid;grid-template-columns:minmax(170px,1.4fr) auto repeat(3,minmax(120px,1fr));gap:12px;align-items:center;padding:8px 10px;border-top:1px solid var(--vscode-panel-border)}.managed-key small,.managed-key strong{display:block}.managed-key small{color:var(--muted)}.managed-key strong{overflow-wrap:anywhere}.notice{margin:8px 16px;padding:7px 10px;border-left:3px solid var(--vscode-errorForeground);border-radius:5px;background:color-mix(in srgb,var(--vscode-errorForeground) 12%,transparent)}
 @media(max-width:1050px){.dashboard{grid-template-columns:minmax(340px,1.5fr) minmax(240px,1fr)}.accounts-card{grid-column:2}.filters{grid-template-columns:1fr 1fr}.account-metrics{grid-template-columns:1fr 1fr}.managed-key{grid-template-columns:1fr auto 1fr 1fr}.managed-key>div:last-child{display:none}}
@@ -462,6 +496,7 @@ function parseOpenRouterModels(body) {
     return {
       provider: "openrouter",
       id: model.id,
+      benchmarkId: model.canonical_slug,
       name: model.name,
       description: model.description,
       pricing: {
@@ -491,6 +526,31 @@ async function fetchOpenRouterCatalog() {
   const response = await fetch("https://openrouter.ai/api/v1/models?output_modalities=all&sort=intelligence-high-to-low", { signal: AbortSignal.timeout(2e4) });
   if (!response.ok) throw new Error(`OpenRouter HTTP ${response.status}`);
   return parseOpenRouterModels(await response.json());
+}
+
+// src/providers/openrouter-benchmarks.ts
+var finite = (value) => typeof value === "number" && Number.isFinite(value);
+function parseOpenRouterBenchmarks(body, fetchedAt = Date.now()) {
+  const items = [];
+  for (const row of body.data ?? []) {
+    if (typeof row.model_permaslug !== "string" || typeof row.benchmark_type !== "string" || !finite(row.accuracy)) continue;
+    items.push({
+      modelId: row.model_permaslug,
+      modelName: typeof row.display_name === "string" ? row.display_name : void 0,
+      benchmark: row.benchmark_type,
+      score: row.accuracy * 100,
+      costPerTaskUsd: finite(row.avg_cost_per_task) ? row.avg_cost_per_task : void 0,
+      sampleCount: finite(row.total_tasks) ? row.total_tasks : void 0,
+      lastRunAt: typeof row.last_run_timestamp === "string" ? row.last_run_timestamp : void 0,
+      source: typeof row.source === "string" ? row.source : "openrouter"
+    });
+  }
+  return { fetchedAt, asOf: typeof body.meta?.as_of === "string" ? body.meta.as_of : void 0, citation: typeof body.meta?.citation === "string" ? body.meta.citation : void 0, items };
+}
+async function fetchOpenRouterBenchmarks(key) {
+  const response = await fetch("https://openrouter.ai/api/v1/benchmarks?source=openrouter", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2e4) });
+  if (!response.ok) throw new Error(`OpenRouter Benchmarks HTTP ${response.status}`);
+  return parseOpenRouterBenchmarks(await response.json());
 }
 
 // src/extension.ts
@@ -537,15 +597,17 @@ async function refresh(context, manual) {
   if (running) return running;
   running = (async () => {
     const previous = state.snapshots.flatMap((snapshot) => snapshot.offers);
+    const openRouterKey = await context.secrets.get(secretKey("openrouter"));
+    const benchmarkSnapshot = openRouterKey ? await loadBenchmarks(context.globalState, openRouterKey, manual, fetchOpenRouterBenchmarks) : context.globalState.get(BENCHMARK_CACHE_KEY) ?? null;
     const snapshots = enrichProviderBenchmarks(await fetchAllProviders({
       openrouter: fetchOpenRouterCatalog,
       "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
       "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers
-    }));
+    }), benchmarkSnapshot);
     const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers);
     const changes = diffOffers(previous, successful);
     state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() };
-    const aiKey = await context.secrets.get(secretKey("openrouter"));
+    const aiKey = openRouterKey;
     if (aiKey && (manual || changes.length > 0)) try {
       state.ai = await aiDashboardSummary(aiKey, state.agents, changes, vscode.workspace.getConfiguration("priceWatch").get("aiModel", "openrouter/free"));
     } catch (error) {
