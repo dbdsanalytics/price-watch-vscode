@@ -46,3 +46,16 @@ test("zeigt Kontingentangaben ohne Dollarwert statt der generischen Zeile", () =
   expect(html).toContain("Reset")
   expect(html).not.toContain("kein festes Schlüssellimit")
 })
+
+// Bisher konnte die Verarbeitung nach dem Abruf werfen, ohne dass irgendetwas
+// sichtbar wurde: beide automatischen Aufrufwege nutzen void refresh(...), die
+// Rejection blieb unbehandelt und das Panel zeigte weiter den alten Stand.
+test("meldet einen Fehler der Verarbeitung sichtbar im Panel", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, refreshError: "Speichern fehlgeschlagen" })
+  expect(html).toContain("Speichern fehlgeschlagen")
+  expect(html).toContain("notice error")
+})
+
+test("zeigt keine Fehlerzeile, wenn die Aktualisierung durchlief", () => {
+  expect(panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })).not.toContain("notice error")
+})
