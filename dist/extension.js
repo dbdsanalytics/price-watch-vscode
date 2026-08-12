@@ -85,14 +85,75 @@ async function fetchOpenRouterManagement(key) {
   return parseOpenRouterManagement(credits, keys);
 }
 
+// src/config.ts
+function stripJsoncComments(src) {
+  let out = "";
+  let inString = false;
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (inString) {
+      out += c;
+      if (c === "\\") {
+        out += next ?? "";
+        i += 2;
+        continue;
+      }
+      if (c === '"') inString = false;
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") i += 1;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i += 1;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+function parseJsonc(src) {
+  return JSON.parse(stripJsoncComments(src).replace(/,\s*([}\]])/g, "$1"));
+}
+
 // src/agents/discovery.ts
-function parseAgentMarkdown(filename, source) {
+function parseAgentMarkdown(filename, source, defaultModel = "") {
   const front = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   const header = front?.[1] ?? "";
   const prompt = front?.[2] ?? source;
   const value = (key) => header.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim() ?? "";
   const tools = value("tools").replace(/^\[|\]$/g, "").split(",").map((tool) => tool.trim()).filter(Boolean);
-  return { name: filename.replace(/\.(md|jsonc?)$/, ""), description: value("description"), model: value("model"), tools, prompt };
+  const explicitModel = value("model");
+  return { name: filename.replace(/\.(md|jsonc?)$/, ""), description: value("description"), model: explicitModel || defaultModel, modelSource: explicitModel ? "explicit" : defaultModel ? "inherited" : "missing", tools, prompt };
+}
+function parseOpenCodeConfigAgents(source, sourceName) {
+  const config = parseJsonc(source);
+  return Object.entries(config.agent ?? {}).map(([name, agent]) => {
+    const model = agent.model || config.model || "";
+    const tools = Array.isArray(agent.tools) ? agent.tools : Object.entries(agent.tools ?? {}).filter(([, enabled]) => enabled).map(([tool]) => tool);
+    return { name, description: agent.description ?? "", model, modelSource: agent.model ? "explicit" : config.model ? "inherited" : "missing", tools, prompt: "", source: sourceName };
+  });
+}
+function parseOpenCodeDefaultModel(source) {
+  return parseJsonc(source).model ?? "";
+}
+function mergeAgents(...scopes) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const scope of scopes) for (const agent of scope) merged.set(agent.name, agent);
+  return [...merged.values()];
 }
 function metadataPayload(agent) {
   return { name: agent.name, description: agent.description, model: agent.model, tools: agent.tools };
@@ -145,8 +206,9 @@ var import_crypto = require("crypto");
 
 // src/agents/assessment.ts
 function assessAgent(agent, offers) {
+  if (/^(lmstudio|ollama|local)[/:]/i.test(agent.model)) return { agent, status: "local", reason: "Lokales Modell \xB7 keine \xF6ffentlichen Preis- oder Benchmarkdaten" };
   const current = offers.find((offer) => agent.model.endsWith(offer.id));
-  if (!current) return { agent, status: "unknown", reason: "Aktuelles Modell nicht im Katalog" };
+  if (!current) return { agent, status: "unknown", reason: agent.model ? "Modell nicht im \xF6ffentlichen Katalog gefunden" : "Keine Modellzuordnung gefunden" };
   if (current.deprecatedAt) return { agent, status: "deprecated", reason: `Abgek\xFCndigt: ${current.deprecatedAt}` };
   const codingAgent = /code|review|build|debug|develop/i.test(`${agent.name} ${agent.description}`);
   if (codingAgent && !current.capabilities.purposes.includes("coding")) return { agent, status: "unsuitable", reason: "Keine belastbaren Coding-F\xE4higkeiten ausgewiesen" };
@@ -172,7 +234,7 @@ var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 var money = (value) => `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 4 }).format(value)} $`;
 var labels = { coding: "Coding", language: "Sprache", reasoning: "Reasoning", vision: "Vision", tools: "Tools", allround: "Allround" };
 var purposeIcon = { coding: "\u2318", language: "A", reasoning: "\u25C7", vision: "\u25C9", tools: "\u2699", allround: "\u2726" };
-var statusLabel = { suitable: "Passend", expensive: "Teuer", "alternative-available": "Alternative", unsuitable: "Unpassend", deprecated: "Veraltet", unknown: "Nicht bewertbar" };
+var statusLabel = { suitable: "Passend", expensive: "Teuer", "alternative-available": "Alternative", unsuitable: "Unpassend", deprecated: "Veraltet", local: "Lokal", unknown: "Nicht bewertbar" };
 function purposeBadge(purpose) {
   return `<span class="badge purpose purpose-${purpose}"><b>${purposeIcon[purpose]}</b>${labels[purpose]}</span>`;
 }
@@ -201,7 +263,7 @@ function agentPurpose(agent) {
   return "coding";
 }
 function agentGroup(status) {
-  return status === "suitable" ? "suitable" : status === "unknown" ? "unknown" : "attention";
+  return status === "suitable" ? "suitable" : status === "unknown" || status === "local" ? "unknown" : "attention";
 }
 function renderAgentRow(item, compact = false) {
   const purpose = agentPurpose(item.agent);
@@ -400,13 +462,26 @@ var statusBar;
 var running;
 var state = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 };
 function localAgents() {
-  const directories = [(0, import_path.join)((0, import_os.homedir)(), ".config", "opencode", "agents"), (0, import_path.join)((0, import_os.homedir)(), ".config", "opencode", "agent"), ...(vscode.workspace.workspaceFolders ?? []).flatMap((folder) => [(0, import_path.join)(folder.uri.fsPath, ".opencode", "agents"), (0, import_path.join)(folder.uri.fsPath, ".opencode", "agent")])];
-  const agents = [];
-  for (const directory of directories) try {
-    for (const file of (0, import_fs.readdirSync)(directory)) if (file.endsWith(".md")) agents.push({ ...parseAgentMarkdown(file, (0, import_fs.readFileSync)((0, import_path.join)(directory, file), "utf8")), source: (0, import_path.join)(directory, file) });
-  } catch {
-  }
-  return agents;
+  const readScope = (root, configNames) => {
+    let defaultModel = "";
+    const configAgents = [];
+    for (const name of configNames) try {
+      const file = (0, import_path.join)(root, name), source = (0, import_fs.readFileSync)(file, "utf8");
+      defaultModel = parseOpenCodeDefaultModel(source) || defaultModel;
+      configAgents.push(...parseOpenCodeConfigAgents(source, file));
+    } catch {
+    }
+    const markdownAgents = [];
+    for (const directory of [(0, import_path.join)(root, "agents"), (0, import_path.join)(root, "agent")]) try {
+      for (const file of (0, import_fs.readdirSync)(directory)) if (file.endsWith(".md")) markdownAgents.push({ ...parseAgentMarkdown(file, (0, import_fs.readFileSync)((0, import_path.join)(directory, file), "utf8"), defaultModel), source: (0, import_path.join)(directory, file) });
+    } catch {
+    }
+    return mergeAgents(configAgents, markdownAgents);
+  };
+  const globalRoot = (0, import_path.join)((0, import_os.homedir)(), ".config", "opencode");
+  const globalAgents = readScope(globalRoot, ["opencode.json", "opencode.jsonc"]);
+  const projectScopes = (vscode.workspace.workspaceFolders ?? []).map((folder) => readScope((0, import_path.join)(folder.uri.fsPath, ".opencode"), ["opencode.json", "opencode.jsonc"]));
+  return mergeAgents(globalAgents, ...projectScopes);
 }
 function refreshPanel() {
   if (panel) panel.webview.html = panelHtml(state);

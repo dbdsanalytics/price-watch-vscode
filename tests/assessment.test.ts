@@ -9,3 +9,8 @@ test("does not recommend an unrated model as a cheaper equivalent", () => {
   expect(result.status).toBe("suitable")
   expect(result.alternative).toBeUndefined()
 })
+
+test("describes local models separately from missing public catalog data", () => {
+  const result = assessAgent({ name: "translate", description: "Translation", model: "lmstudio/qwen", modelSource: "explicit", tools: [], prompt: "local" }, [])
+  expect(result).toMatchObject({ status: "local", reason: "Lokales Modell · keine öffentlichen Preis- oder Benchmarkdaten" })
+})

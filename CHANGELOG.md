@@ -7,6 +7,8 @@
 - Gliedert Konten nach Anbieter, Verbindungstyp, Guthaben, Verbrauch, Limit und Reset.
 - Kennzeichnet Anbieter, Fähigkeiten sowie kostenlose und kostenpflichtige Modelle mit einem konsistenten zugänglichen Farbsystem.
 - Verhindert abgeschnittene wesentliche Konto- und Statustexte in schmalen Ansichten.
+- Liest Agenten aus Markdown und `opencode.json(c)`, löst geerbte Standardmodelle auf und entfernt überschattete Duplikate.
+- Kennzeichnet lokale LM-Studio-, Ollama- und lokale Provider-Modelle getrennt von fehlenden öffentlichen Katalogdaten.
 - Stellt das vereinbarte kompakte 2:1:1-Dashboard mit responsiven Umbrüchen wieder her.
 - Begrenzt die Agentenvorschau und verhindert überlaufende Texte in schmalen Karten.
 - Behandelt negative OpenRouter-Platzhalter als unbekannte Preise statt als echte Werte.

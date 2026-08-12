@@ -44,7 +44,7 @@ export function stripJsoncComments(src: string): string {
 }
 
 export function parseJsonc<T = unknown>(src: string): T {
-  return JSON.parse(stripJsoncComments(src)) as T
+  return JSON.parse(stripJsoncComments(src).replace(/,\s*([}\]])/g, "$1")) as T
 }
 
 interface ProviderModel {

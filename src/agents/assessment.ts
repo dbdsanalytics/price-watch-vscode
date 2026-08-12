@@ -1,11 +1,12 @@
 import type { AgentMetadata } from "./discovery"
 import type { ModelOffer } from "../domain/model"
 
-export interface AgentAssessment { agent: AgentMetadata; status: "suitable" | "expensive" | "alternative-available" | "unsuitable" | "deprecated" | "unknown"; reason: string; alternative?: ModelOffer }
+export interface AgentAssessment { agent: AgentMetadata; status: "suitable" | "expensive" | "alternative-available" | "unsuitable" | "deprecated" | "local" | "unknown"; reason: string; alternative?: ModelOffer }
 
 export function assessAgent(agent: AgentMetadata, offers: ModelOffer[]): AgentAssessment {
+  if (/^(lmstudio|ollama|local)[/:]/i.test(agent.model)) return { agent, status: "local", reason: "Lokales Modell · keine öffentlichen Preis- oder Benchmarkdaten" }
   const current = offers.find((offer) => agent.model.endsWith(offer.id))
-  if (!current) return { agent, status: "unknown", reason: "Aktuelles Modell nicht im Katalog" }
+  if (!current) return { agent, status: "unknown", reason: agent.model ? "Modell nicht im öffentlichen Katalog gefunden" : "Keine Modellzuordnung gefunden" }
   if (current.deprecatedAt) return { agent, status: "deprecated", reason: `Abgekündigt: ${current.deprecatedAt}` }
   const codingAgent = /code|review|build|debug|develop/i.test(`${agent.name} ${agent.description}`)
   if (codingAgent && !current.capabilities.purposes.includes("coding")) return { agent, status: "unsuitable", reason: "Keine belastbaren Coding-Fähigkeiten ausgewiesen" }

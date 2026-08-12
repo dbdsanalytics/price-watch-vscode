@@ -14,7 +14,7 @@ const esc = (value: unknown) => String(value ?? "").replace(/&/g,"&amp;").replac
 const money = (value: number) => `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 4 }).format(value)} $`
 const labels: Record<Purpose,string> = { coding:"Coding", language:"Sprache", reasoning:"Reasoning", vision:"Vision", tools:"Tools", allround:"Allround" }
 const purposeIcon: Record<Purpose,string> = { coding:"⌘", language:"A", reasoning:"◇", vision:"◉", tools:"⚙", allround:"✦" }
-const statusLabel: Record<AgentAssessment["status"],string> = { suitable:"Passend", expensive:"Teuer", "alternative-available":"Alternative", unsuitable:"Unpassend", deprecated:"Veraltet", unknown:"Nicht bewertbar" }
+const statusLabel: Record<AgentAssessment["status"],string> = { suitable:"Passend", expensive:"Teuer", "alternative-available":"Alternative", unsuitable:"Unpassend", deprecated:"Veraltet", local:"Lokal", unknown:"Nicht bewertbar" }
 
 function purposeBadge(purpose: Purpose): string { return `<span class="badge purpose purpose-${purpose}"><b>${purposeIcon[purpose]}</b>${labels[purpose]}</span>` }
 function providerBadge(provider: ModelOffer["provider"]): string { return `<span class="badge provider provider-${provider}"><i></i>${esc(provider === "openrouter" ? "OpenRouter" : provider === "opencode-zen" ? "Zen" : "Go")}</span>` }
@@ -40,7 +40,7 @@ function agentPurpose(agent: AgentMetadata): Purpose {
   return "coding"
 }
 
-function agentGroup(status: AgentAssessment["status"]): "attention"|"suitable"|"unknown" { return status === "suitable" ? "suitable" : status === "unknown" ? "unknown" : "attention" }
+function agentGroup(status: AgentAssessment["status"]): "attention"|"suitable"|"unknown" { return status === "suitable" ? "suitable" : status === "unknown" || status === "local" ? "unknown" : "attention" }
 function renderAgentRow(item: AgentAssessment, compact = false): string {
   const purpose = agentPurpose(item.agent)
   return `<article class="agent-row${compact ? " agent-preview" : ""}"><div class="agent-identity"><strong>${esc(item.agent.name)}</strong>${purposeBadge(purpose)}</div><div class="agent-model"><span>Aktuelles Modell</span><strong>${esc(item.agent.model || "Kein Modell zugewiesen")}</strong></div><div class="agent-result"><span class="status status-${item.status}">${statusLabel[item.status]}</span>${compact ? "" : `<small>${esc(item.reason)}</small>`}${!compact && item.alternative ? `<small>Empfehlung: <strong>${esc(item.alternative.name)}</strong></small>` : ""}</div></article>`

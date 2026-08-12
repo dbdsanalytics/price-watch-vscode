@@ -6,7 +6,7 @@ import type { AccountStatus } from "./accounts/types"
 import { fetchOpenRouterAccount, unavailableAccount } from "./accounts/openrouter"
 import { fetchOpenRouterManagement } from "./accounts/openrouter-management"
 import type { AgentMetadata } from "./agents/discovery"
-import { parseAgentMarkdown } from "./agents/discovery"
+import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
 import { mergeHistory } from "./domain/history"
 import type { ModelOffer } from "./domain/model"
@@ -27,10 +27,24 @@ let panel: vscode.WebviewPanel | undefined, statusBar: vscode.StatusBarItem, run
 let state: DashboardState = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 }
 
 function localAgents(): AgentMetadata[] {
-  const directories = [join(homedir(), ".config", "opencode", "agents"), join(homedir(), ".config", "opencode", "agent"), ...(vscode.workspace.workspaceFolders ?? []).flatMap((folder) => [join(folder.uri.fsPath, ".opencode", "agents"), join(folder.uri.fsPath, ".opencode", "agent")])]
-  const agents: AgentMetadata[] = []
-  for (const directory of directories) try { for (const file of readdirSync(directory)) if (file.endsWith(".md")) agents.push({ ...parseAgentMarkdown(file, readFileSync(join(directory, file), "utf8")), source: join(directory, file) }) } catch { /* optional directory */ }
-  return agents
+  const readScope = (root: string, configNames: string[]): AgentMetadata[] => {
+    let defaultModel = ""
+    const configAgents: AgentMetadata[] = []
+    for (const name of configNames) try {
+      const file = join(root,name), source = readFileSync(file,"utf8")
+      defaultModel = parseOpenCodeDefaultModel(source) || defaultModel
+      configAgents.push(...parseOpenCodeConfigAgents(source,file))
+    } catch { /* optional or invalid config */ }
+    const markdownAgents: AgentMetadata[] = []
+    for (const directory of [join(root,"agents"),join(root,"agent")]) try {
+      for (const file of readdirSync(directory)) if (file.endsWith(".md")) markdownAgents.push({ ...parseAgentMarkdown(file,readFileSync(join(directory,file),"utf8"),defaultModel), source:join(directory,file) })
+    } catch { /* optional directory */ }
+    return mergeAgents(configAgents,markdownAgents)
+  }
+  const globalRoot = join(homedir(),".config","opencode")
+  const globalAgents = readScope(globalRoot,["opencode.json","opencode.jsonc"])
+  const projectScopes = (vscode.workspace.workspaceFolders ?? []).map((folder)=>readScope(join(folder.uri.fsPath,".opencode"),["opencode.json","opencode.jsonc"]))
+  return mergeAgents(globalAgents,...projectScopes)
 }
 
 function refreshPanel(): void { if (panel) panel.webview.html = panelHtml(state) }
