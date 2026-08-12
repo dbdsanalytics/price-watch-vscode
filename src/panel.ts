@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto"
-import type { AccountStatus } from "./accounts/types"
+import type { AccountStatus, OpenRouterManagementStatus } from "./accounts/types"
 import { assessAgent, type AgentAssessment } from "./agents/assessment"
 import type { AgentMetadata } from "./agents/discovery"
 import type { AiResult } from "./ai"
@@ -8,7 +8,7 @@ import { isFreePricing, type ModelOffer } from "./domain/model"
 import type { ProviderSnapshot } from "./domain/provider"
 import { rankOffers, type Purpose } from "./domain/ranking"
 
-export interface DashboardState { snapshots: ProviderSnapshot[]; history: PriceChange[]; agents: AgentMetadata[]; accounts: AccountStatus[]; ai: AiResult | null; updatedAt: number }
+export interface DashboardState { snapshots: ProviderSnapshot[]; history: PriceChange[]; agents: AgentMetadata[]; accounts: AccountStatus[]; openRouterManagement?: OpenRouterManagementStatus | null; ai: AiResult | null; updatedAt: number }
 const esc = (value: unknown) => String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")
 const price = (value: number, unknown?: boolean) => unknown ? "–" : new Intl.NumberFormat("de-DE", { maximumFractionDigits: 4 }).format(value)
 const labels: Record<Purpose,string> = { coding:"Coding", language:"Sprache", reasoning:"Reasoning", vision:"Vision", tools:"Tools", allround:"Allround" }

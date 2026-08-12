@@ -48,6 +48,11 @@
         "command": "priceWatch.disconnectAccount",
         "title": "Anbieterkonto trennen",
         "category": "Preis-Watch"
+      },
+      {
+        "command": "priceWatch.connectOpenRouterManagement",
+        "title": "OpenRouter Management Key verbinden",
+        "category": "Preis-Watch"
       }
     ],
     "configuration": {

@@ -10,6 +10,14 @@ describe("extension manifest", () => {
       url: "https://github.com/dbdsanalytics/price-watch-vscode.git",
     })
   })
+
+  test("declares a separate OpenRouter management connection command", () => {
+    expect(manifest.contributes.commands).toContainEqual({
+      command: "priceWatch.connectOpenRouterManagement",
+      title: "OpenRouter Management Key verbinden",
+      category: "Preis-Watch",
+    })
+  })
 })
 
 describe("stripJsoncComments", () => {
