@@ -152,7 +152,10 @@ function parseOpenCodeDefaultModel(source) {
 }
 function mergeAgents(...scopes) {
   const merged = /* @__PURE__ */ new Map();
-  for (const scope of scopes) for (const agent of scope) merged.set(agent.name, agent);
+  for (const scope of scopes) for (const agent of scope) {
+    const previous = merged.get(agent.name);
+    merged.set(agent.name, previous && !agent.model ? { ...agent, model: previous.model, modelSource: previous.modelSource } : agent);
+  }
   return [...merged.values()];
 }
 function metadataPayload(agent) {

@@ -27,7 +27,10 @@ export function parseOpenCodeDefaultModel(source: string): string { return parse
 
 export function mergeAgents(...scopes: AgentMetadata[][]): AgentMetadata[] {
   const merged = new Map<string,AgentMetadata>()
-  for (const scope of scopes) for (const agent of scope) merged.set(agent.name, agent)
+  for (const scope of scopes) for (const agent of scope) {
+    const previous = merged.get(agent.name)
+    merged.set(agent.name, previous && !agent.model ? { ...agent, model: previous.model, modelSource: previous.modelSource } : agent)
+  }
   return [...merged.values()]
 }
 

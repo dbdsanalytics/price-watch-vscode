@@ -27,3 +27,11 @@ test("applies the inherited model to markdown agents and lets project scope win 
   expect(globalAgent).toMatchObject({ model: "opencode-go/luna", modelSource: "inherited" })
   expect(mergeAgents([globalAgent],[projectAgent])).toEqual([expect.objectContaining({ description: "Project review", model: "openrouter/reviewer", source: "project" })])
 })
+
+test("a markdown override keeps the configured model when it does not declare one", () => {
+  const configured = { name: "code-agent", description: "Configured", model: "openrouter/qwen/coder", modelSource: "explicit" as const, tools: ["read"], prompt: "", source: "config" }
+  const markdown = { name: "code-agent", description: "Project instructions", model: "", modelSource: "missing" as const, tools: [], prompt: "full local prompt", source: "project markdown" }
+  expect(mergeAgents([configured],[markdown])).toEqual([expect.objectContaining({
+    name: "code-agent", description: "Project instructions", model: "openrouter/qwen/coder", modelSource: "explicit", prompt: "full local prompt", source: "project markdown",
+  })])
+})
