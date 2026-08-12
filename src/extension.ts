@@ -24,7 +24,7 @@ let panel: vscode.WebviewPanel | undefined, statusBar: vscode.StatusBarItem, run
 let state: DashboardState = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 }
 
 function localAgents(): AgentMetadata[] {
-  const directories = [join(homedir(), ".config", "opencode", "agents"), ...(vscode.workspace.workspaceFolders ?? []).map((folder) => join(folder.uri.fsPath, ".opencode", "agents"))]
+  const directories = [join(homedir(), ".config", "opencode", "agents"), join(homedir(), ".config", "opencode", "agent"), ...(vscode.workspace.workspaceFolders ?? []).flatMap((folder) => [join(folder.uri.fsPath, ".opencode", "agents"), join(folder.uri.fsPath, ".opencode", "agent")])]
   const agents: AgentMetadata[] = []
   for (const directory of directories) try { for (const file of readdirSync(directory)) if (file.endsWith(".md")) agents.push({ ...parseAgentMarkdown(file, readFileSync(join(directory, file), "utf8")), source: join(directory, file) }) } catch { /* optional directory */ }
   return agents
@@ -67,12 +67,25 @@ async function connectAccount(context: vscode.ExtensionContext): Promise<void> {
   state.accounts = [...state.accounts.filter((item)=>item.provider!==provider), account]; refreshPanel()
 }
 
+async function disconnectAccount(context: vscode.ExtensionContext): Promise<void> {
+  const provider = await vscode.window.showQuickPick(state.accounts.map((account)=>account.provider), { title: "Kontoverbindung entfernen" }); if (!provider) return
+  await context.secrets.delete(secretKey(provider)); state.accounts = state.accounts.filter((account)=>account.provider!==provider); refreshPanel()
+}
+
+async function refreshConnectedAccounts(context: vscode.ExtensionContext): Promise<void> {
+  const providers: AccountStatus["provider"][] = ["openrouter","opencode-zen","opencode-go","claude-code"]
+  const accounts: AccountStatus[] = []
+  for (const provider of providers) { const token = await context.secrets.get(secretKey(provider)); if (!token) continue; try { accounts.push(provider === "openrouter" ? await fetchOpenRouterAccount(token) : unavailableAccount(provider,"Verbunden · persönliche Usage-API nicht verfügbar")) } catch (error) { accounts.push(unavailableAccount(provider,error instanceof Error ? error.message : String(error))) } }
+  state.accounts = accounts
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   state.history = context.globalState.get<PriceChange[]>(HISTORY_KEY) ?? []
   state.snapshots = context.globalState.get<ProviderSnapshot[]>(SNAPSHOT_KEY) ?? []
-  context.globalState.setKeysForSync([HISTORY_KEY, SNAPSHOT_KEY])
+  context.globalState.setKeysForSync([HISTORY_KEY])
+  await refreshConnectedAccounts(context)
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100); statusBar.command = "priceWatch.open"; context.subscriptions.push(statusBar)
-  context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => { if (!panel) { panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }); panel.onDidDispose(()=>panel=undefined); panel.webview.onDidReceiveMessage((message)=>{ if (message?.type === "connect") void connectAccount(context) }) } else panel.reveal(); refreshPanel() }), vscode.commands.registerCommand("priceWatch.refresh", ()=>refresh(context,true)), vscode.commands.registerCommand("priceWatch.setKey", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", ()=>connectAccount(context)))
+  context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => { if (!panel) { panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }); panel.onDidDispose(()=>panel=undefined); panel.webview.onDidReceiveMessage((message)=>{ if (message?.type === "connect") void connectAccount(context); if (message?.type === "disconnect") void disconnectAccount(context) }) } else panel.reveal(); refreshPanel() }), vscode.commands.registerCommand("priceWatch.refresh", ()=>refresh(context,true)), vscode.commands.registerCommand("priceWatch.setKey", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.disconnectAccount", ()=>disconnectAccount(context)))
   const hours = Math.max(1, vscode.workspace.getConfiguration("priceWatch").get<number>("checkIntervalHours",1)); const timer = setInterval(()=>void refresh(context,false),hours*3_600_000); context.subscriptions.push({ dispose:()=>clearInterval(timer) })
   updateStatus(); void refresh(context,false)
 }

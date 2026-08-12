@@ -132,23 +132,25 @@ function assessAgent(agent, offers2) {
 }
 
 // src/panel.ts
+var import_crypto = require("crypto");
 var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 var offers = (state2) => state2.snapshots.flatMap((snapshot) => snapshot.offers);
 function panelHtml(state2) {
+  const nonce = (0, import_crypto.randomBytes)(16).toString("base64");
   const all = offers(state2), free = all.filter((offer) => isFreePricing(offer.pricing)).length;
-  const modelRows = all.slice().sort((a, b) => a.pricing.input + a.pricing.output - (b.pricing.input + b.pricing.output)).map((offer) => `<tr><td>${esc(offer.name)}</td><td>${esc(offer.provider)}</td><td>${offer.pricing.input}</td><td>${offer.pricing.output}</td><td>${esc(offer.capabilities.purposes.join(", "))}</td></tr>`).join("");
+  const modelRows = all.slice().sort((a, b) => a.pricing.input + a.pricing.output - (b.pricing.input + b.pricing.output)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-provider="${esc(offer.provider)}" data-price="${isFreePricing(offer.pricing) ? "free" : "paid"}"><td>${esc(offer.name)}</td><td>${esc(offer.provider)}</td><td>${offer.pricing.input}</td><td>${offer.pricing.output}</td><td>${esc(offer.capabilities.purposes.join(", "))}</td></tr>`).join("");
   const assessments = state2.agents.map((agent) => assessAgent(agent, all));
   const agents = assessments.length ? assessments.map(({ agent, status, reason, alternative }) => `<div class="row"><span>${esc(agent.name)} \xB7 ${esc(agent.model)}<small class="muted"> ${esc(reason)}</small></span><b>${esc(status)}${alternative ? ` \u2192 ${esc(alternative.name)}` : ""}</b></div>`).join("") : `<div class="muted">Keine Agenten erkannt</div>`;
-  const accounts = state2.accounts.length ? state2.accounts.map((account) => `<div class="row"><span>${esc(account.provider)}</span><b>${esc(account.remainingUsd ?? account.message ?? account.state)}</b></div>`).join("") : `<button data-action="connect">Konto verbinden</button>`;
+  const accounts = state2.accounts.map((account) => `<div class="row"><span>${esc(account.provider)}</span><b>${esc(account.remainingUsd ?? account.message ?? account.state)}</b></div>`).join("") + `<div><button data-action="connect">Konto verbinden</button> <button data-action="disconnect">Verbindung entfernen</button></div>`;
   const topFree = rankOffers(all, "coding", "free").slice(0, 3), topPaid = rankOffers(all, "coding", "paid").slice(0, 3);
   const ranks = (items) => items.length ? items.map((item, index) => `${index + 1}. ${esc(item.offer.name)}${item.score === null ? " \xB7 noch nicht bewertet" : ` \xB7 ${item.score}`}`).join("<br>") : "Keine bewertbaren Modelle";
-  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>
   :root{color-scheme:light dark}*{box-sizing:border-box}body{font:var(--vscode-font-size) var(--vscode-font-family);color:var(--vscode-foreground);margin:0;padding:10px;background:linear-gradient(145deg,var(--vscode-editor-background),color-mix(in srgb,var(--vscode-editor-background) 88%,#4c1d95))}.nav{display:flex;gap:16px;align-items:center;border-bottom:1px solid var(--vscode-panel-border);padding:3px 2px 7px}.nav button{background:none;color:inherit;border:0;padding:0;cursor:pointer}.metrics{display:flex;gap:28px;padding:7px 2px;flex-wrap:wrap}.metrics b{font-size:1.35em}.insight{border-left:2px solid #a78bfa;background:#8b5cf61a;padding:4px 7px;margin-bottom:5px}.grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:5px;align-items:start}.card{background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:7px;padding:5px 7px}.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;padding:2px 0;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 45%,transparent)}.view[hidden]{display:none}.muted{color:var(--vscode-descriptionForeground)}table{width:100%;border-collapse:collapse}td,th{padding:4px;border-bottom:1px solid var(--vscode-panel-border);text-align:left}@media(max-width:1000px){.grid{grid-template-columns:1.5fr 1fr}.accounts{grid-column:2}}@media(max-width:700px){.grid{grid-template-columns:1fr}.accounts{grid-column:auto}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}}
   </style></head><body><nav class="nav"><b>Preis-Watch</b><button data-view="overview">\xDCbersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button><span style="margin-left:auto">\u25CF aktuell</span></nav>
   <section class="view" id="overview"><div class="metrics"><span><b>${all.length}</b> Modelle</span><span><b>${free}</b> kostenlos</span><span><b>${state2.history.length}</b> \xC4nderungen</span><span><b>${state2.agents.length}</b> Agenten</span></div><div class="insight"><b>\u2726 KI-Fazit</b> ${esc(state2.ai?.text ?? "Rankings und Preis\xE4nderungen werden lokal ausgewertet.")}</div><div class="grid"><div class="card"><b>Beste Modelle f\xFCr deinen Zweck</b><div class="row"><span><b>Kostenlos \xB7 Coding</b><br>${ranks(topFree)}</span><span><b>Bezahlt \xB7 Coding</b><br>${ranks(topPaid)}</span></div><p class="muted">Coding \xB7 Sprache \xB7 Reasoning \xB7 Vision \xB7 Tools \xB7 Allround</p></div><div class="card"><b>Deine Agenten</b>${agents}</div><div class="card accounts"><b>Konten &amp; Limits</b>${accounts}</div></div></section>
-  <section class="view" id="models" hidden><h2>Alle Modelle</h2><input id="search" placeholder="Modelle durchsuchen"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th></tr></thead><tbody>${modelRows}</tbody></table></section>
+  <section class="view" id="models" hidden><h2>Alle Modelle</h2><input id="search" placeholder="Modelle durchsuchen"> <select id="provider"><option value="">Alle Anbieter</option><option>openrouter</option><option>opencode-zen</option><option>opencode-go</option></select> <select id="price"><option value="">Kostenlos &amp; bezahlt</option><option value="free">Kostenlos</option><option value="paid">Bezahlt</option></select><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th></tr></thead><tbody>${modelRows}</tbody></table></section>
   <section class="view" id="agents" hidden><h2>Deine Agenten</h2>${agents}</section><section class="view" id="accounts" hidden><h2>Konten &amp; Limits</h2>${accounts}</section>
-  <script>const vscode=acquireVsCodeApi();document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==b.dataset.view)}));document.querySelectorAll('[data-action=connect]').forEach(b=>b.addEventListener('click',()=>vscode.postMessage({type:'connect'})));</script></body></html>`;
+  <script nonce="${nonce}">const vscode=acquireVsCodeApi();document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==b.dataset.view)}));document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>vscode.postMessage({type:b.dataset.action})));const filter=()=>{const q=document.getElementById('search').value.toLowerCase(),p=document.getElementById('provider').value,c=document.getElementById('price').value;document.querySelectorAll('[data-model]').forEach(r=>r.hidden=!(r.dataset.model.includes(q)&&(!p||r.dataset.provider===p)&&(!c||r.dataset.price===c)))};['search','provider','price'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',filter));</script></body></html>`;
 }
 
 // src/prices.ts
@@ -229,7 +231,7 @@ function parsePricing(mdx, provider) {
 }
 var parseZenDocument = (mdx) => parsePricing(mdx, "opencode-zen");
 function parseGoDocument(mdx) {
-  const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month, then \$(\d+(?:\.\d+)?)\/month/i);
+  const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month[^$]{0,40}\$(\d+(?:\.\d+)?)\/month/i);
   return { subscription: { firstMonthUsd: Number(match?.[1] ?? 0), monthlyUsd: Number(match?.[2] ?? 0) }, offers: parsePricing(mdx, "opencode-go") };
 }
 async function fetchOpenCodeDocument(url) {
@@ -289,7 +291,7 @@ var statusBar;
 var running;
 var state = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 };
 function localAgents() {
-  const directories = [(0, import_path.join)((0, import_os.homedir)(), ".config", "opencode", "agents"), ...(vscode.workspace.workspaceFolders ?? []).map((folder) => (0, import_path.join)(folder.uri.fsPath, ".opencode", "agents"))];
+  const directories = [(0, import_path.join)((0, import_os.homedir)(), ".config", "opencode", "agents"), (0, import_path.join)((0, import_os.homedir)(), ".config", "opencode", "agent"), ...(vscode.workspace.workspaceFolders ?? []).flatMap((folder) => [(0, import_path.join)(folder.uri.fsPath, ".opencode", "agents"), (0, import_path.join)(folder.uri.fsPath, ".opencode", "agent")])];
   const agents = [];
   for (const directory of directories) try {
     for (const file of (0, import_fs.readdirSync)(directory)) if (file.endsWith(".md")) agents.push({ ...parseAgentMarkdown(file, (0, import_fs.readFileSync)((0, import_path.join)(directory, file), "utf8")), source: (0, import_path.join)(directory, file) });
@@ -352,10 +354,32 @@ async function connectAccount(context) {
   state.accounts = [...state.accounts.filter((item) => item.provider !== provider), account];
   refreshPanel();
 }
+async function disconnectAccount(context) {
+  const provider = await vscode.window.showQuickPick(state.accounts.map((account) => account.provider), { title: "Kontoverbindung entfernen" });
+  if (!provider) return;
+  await context.secrets.delete(secretKey(provider));
+  state.accounts = state.accounts.filter((account) => account.provider !== provider);
+  refreshPanel();
+}
+async function refreshConnectedAccounts(context) {
+  const providers = ["openrouter", "opencode-zen", "opencode-go", "claude-code"];
+  const accounts = [];
+  for (const provider of providers) {
+    const token = await context.secrets.get(secretKey(provider));
+    if (!token) continue;
+    try {
+      accounts.push(provider === "openrouter" ? await fetchOpenRouterAccount(token) : unavailableAccount(provider, "Verbunden \xB7 pers\xF6nliche Usage-API nicht verf\xFCgbar"));
+    } catch (error) {
+      accounts.push(unavailableAccount(provider, error instanceof Error ? error.message : String(error)));
+    }
+  }
+  state.accounts = accounts;
+}
 async function activate(context) {
   state.history = context.globalState.get(HISTORY_KEY) ?? [];
   state.snapshots = context.globalState.get(SNAPSHOT_KEY) ?? [];
-  context.globalState.setKeysForSync([HISTORY_KEY, SNAPSHOT_KEY]);
+  context.globalState.setKeysForSync([HISTORY_KEY]);
+  await refreshConnectedAccounts(context);
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBar.command = "priceWatch.open";
   context.subscriptions.push(statusBar);
@@ -365,10 +389,11 @@ async function activate(context) {
       panel.onDidDispose(() => panel = void 0);
       panel.webview.onDidReceiveMessage((message) => {
         if (message?.type === "connect") void connectAccount(context);
+        if (message?.type === "disconnect") void disconnectAccount(context);
       });
     } else panel.reveal();
     refreshPanel();
-  }), vscode.commands.registerCommand("priceWatch.refresh", () => refresh(context, true)), vscode.commands.registerCommand("priceWatch.setKey", () => connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", () => connectAccount(context)));
+  }), vscode.commands.registerCommand("priceWatch.refresh", () => refresh(context, true)), vscode.commands.registerCommand("priceWatch.setKey", () => connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", () => connectAccount(context)), vscode.commands.registerCommand("priceWatch.disconnectAccount", () => disconnectAccount(context)));
   const hours = Math.max(1, vscode.workspace.getConfiguration("priceWatch").get("checkIntervalHours", 1));
   const timer = setInterval(() => void refresh(context, false), hours * 36e5);
   context.subscriptions.push({ dispose: () => clearInterval(timer) });

@@ -1,0 +1,14 @@
+.git/**
+.github/**
+.worktrees/**
+.superpowers/**
+src/**
+tests/**
+docs/**
+node_modules/**
+tsconfig.json
+bun.lock
+.gitignore
+*.vsix
+*.log
+.env*

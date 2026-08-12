@@ -16,4 +16,9 @@ describe("Go document", () => {
     expect(catalog.subscription).toEqual({ firstMonthUsd: 5, monthlyUsd: 10 })
     expect(catalog.offers[0]).toMatchObject({ provider: "opencode-go", id: "deepseek-v4-flash" })
   })
+
+  test("parses prices when official docs wrap amounts in markdown emphasis", () => {
+    const catalog = parseGoDocument("OpenCode Go — **$5 for your first month**, then **$10/month**")
+    expect(catalog.subscription).toEqual({ firstMonthUsd: 5, monthlyUsd: 10 })
+  })
 })

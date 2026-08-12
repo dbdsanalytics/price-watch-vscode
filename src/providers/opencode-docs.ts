@@ -36,7 +36,7 @@ export const parseZenDocument = (mdx: string) => parsePricing(mdx, "opencode-zen
 
 export interface GoCatalog { subscription: { firstMonthUsd: number; monthlyUsd: number }; offers: ModelOffer[] }
 export function parseGoDocument(mdx: string): GoCatalog {
-  const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month, then \$(\d+(?:\.\d+)?)\/month/i)
+  const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month[^$]{0,40}\$(\d+(?:\.\d+)?)\/month/i)
   return { subscription: { firstMonthUsd: Number(match?.[1] ?? 0), monthlyUsd: Number(match?.[2] ?? 0) }, offers: parsePricing(mdx, "opencode-go") }
 }
 
