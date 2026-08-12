@@ -28,11 +28,21 @@ export interface BenchmarkScores {
   source: string
   asOf?: string
   match?: "direct" | "base-model" | "local"
+  details?: BenchmarkDetail[]
+}
+
+export interface BenchmarkDetail {
+  name: string
+  score: number
+  costPerTaskUsd?: number
+  sampleCount?: number
+  lastRunAt?: string
 }
 
 export interface ModelOffer {
   provider: ProviderId
   id: string
+  benchmarkId?: string
   name: string
   description?: string
   tier?: string

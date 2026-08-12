@@ -24,3 +24,16 @@ test("maps free variants to their unique base model but rejects ambiguous suffix
   expect(snapshots[1].offers[0].benchmarks?.match).toBe("base-model")
   expect(snapshots[1].offers[1].benchmarks).toBeUndefined()
 })
+
+test("adds detailed API benchmarks only to the exact OpenRouter model", () => {
+  const snapshots = [{ provider:"openrouter" as const, checkedAt:1, stale:false, offers:[offer("openrouter","google/gemini-pro"),offer("openrouter","google/gemini-flash")] }]
+  const enriched=enrichProviderBenchmarks(snapshots,{ fetchedAt:2, asOf:"2026-08-11T12:00:00Z", items:[{ modelId:"google/gemini-pro", benchmark:"gpqa_diamond", score:94.2, costPerTaskUsd:.2, sampleCount:198, lastRunAt:"2026-08-01T08:00:00Z", source:"openrouter" }] })
+  expect(enriched[0].offers[0].benchmarks?.details?.[0]).toMatchObject({ name:"gpqa_diamond", score:94.2, costPerTaskUsd:.2, sampleCount:198 })
+  expect(enriched[0].offers[1].benchmarks?.details).toBeUndefined()
+})
+
+test("matches OpenRouter's exact canonical slug without fuzzy names", () => {
+  const canonical={ ...offer("openrouter","google/gemini-pro"), benchmarkId:"google/gemini-pro-20260801" }
+  const enriched=enrichProviderBenchmarks([{ provider:"openrouter",checkedAt:1,stale:false,offers:[canonical] }],{ fetchedAt:2,items:[{ modelId:"google/gemini-pro-20260801",benchmark:"gpqa_diamond",score:90,source:"openrouter" }] })
+  expect(enriched[0].offers[0].benchmarks?.details?.[0]?.score).toBe(90)
+})

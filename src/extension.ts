@@ -10,6 +10,7 @@ import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCo
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
 import { mergeHistory } from "./domain/history"
 import { enrichProviderBenchmarks } from "./domain/benchmarks"
+import { BENCHMARK_CACHE_KEY, loadBenchmarks } from "./domain/benchmark-cache"
 import type { ModelOffer } from "./domain/model"
 import type { ProviderSnapshot } from "./domain/provider"
 import { panelHtml, type DashboardState } from "./panel"
@@ -17,6 +18,7 @@ import { aiDashboardSummary, aiFailure } from "./ai"
 import { fetchAllProviders } from "./providers/fetch-all"
 import { fetchOpenCodeDocument, parseGoDocument, parseZenDocument } from "./providers/opencode-docs"
 import { fetchOpenRouterCatalog } from "./providers/openrouter"
+import { fetchOpenRouterBenchmarks, type OpenRouterBenchmarkSnapshot } from "./providers/openrouter-benchmarks"
 
 const ZEN_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/zen.mdx"
 const GO_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx"
@@ -55,15 +57,19 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
   if (running) return running
   running = (async () => {
     const previous = state.snapshots.flatMap((snapshot) => snapshot.offers)
+    const openRouterKey=await context.secrets.get(secretKey("openrouter"))
+    const benchmarkSnapshot=openRouterKey
+      ? await loadBenchmarks(context.globalState,openRouterKey,manual,fetchOpenRouterBenchmarks)
+      : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
     const snapshots = enrichProviderBenchmarks(await fetchAllProviders({
       openrouter: fetchOpenRouterCatalog,
       "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
       "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers,
-    }))
+    }),benchmarkSnapshot)
     const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
     const changes = diffOffers(previous, successful)
     state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() }
-    const aiKey = await context.secrets.get(secretKey("openrouter"))
+    const aiKey = openRouterKey
     if (aiKey && (manual || changes.length > 0)) try { state.ai = await aiDashboardSummary(aiKey, state.agents, changes, vscode.workspace.getConfiguration("priceWatch").get<string>("aiModel", "openrouter/free")) } catch (error) { state.ai = aiFailure(error) }
     await context.globalState.update(HISTORY_KEY, state.history)
     await context.globalState.update(SNAPSHOT_KEY, snapshots)

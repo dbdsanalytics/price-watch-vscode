@@ -13,4 +13,9 @@ describe("OpenRouter catalog", () => {
     const [offer] = parseOpenRouterModels({ data: [{ id: "openrouter/auto", name: "Auto Router", pricing: { prompt: "-1", completion: "-1" } }] })
     expect(offer?.pricing).toMatchObject({ input: 0, output: 0, unknown: true })
   })
+
+  test("keeps the canonical slug for exact benchmark matching", () => {
+    const [offer]=parseOpenRouterModels({ data:[{ id:"google/gemini-pro",canonical_slug:"google/gemini-pro-20260801",name:"Gemini Pro",pricing:{prompt:"0",completion:"0"} }] })
+    expect(offer?.benchmarkId).toBe("google/gemini-pro-20260801")
+  })
 })

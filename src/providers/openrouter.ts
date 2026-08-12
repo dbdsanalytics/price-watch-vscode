@@ -15,6 +15,7 @@ export function parseOpenRouterModels(body: { data?: ApiModel[] }): ModelOffer[]
     return {
       provider: "openrouter",
       id: model.id,
+      benchmarkId: model.canonical_slug,
       name: model.name,
       description: model.description,
       pricing: {
