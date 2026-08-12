@@ -34,6 +34,7 @@ export interface BenchmarkScores {
 export interface BenchmarkDetail {
   name: string
   score: number
+  elo?: number
   costPerTaskUsd?: number
   sampleCount?: number
   lastRunAt?: string
