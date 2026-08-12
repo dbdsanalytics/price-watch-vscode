@@ -10,6 +10,16 @@ test("ranks scored coding models and labels missing benchmarks unrated", () => {
   expect(ranked[1]?.rating).toBe("unrated")
 })
 
+test("includes models with a coding benchmark even when the description hid the purpose", () => {
+  const undeclared = { ...make("undeclared", 2, 90), capabilities: { ...make("undeclared", 2).capabilities, purposes: ["language" as const] } }
+  expect(rankOffers([undeclared, make("declared", 1, 70)], "coding", "all")[0]?.offer.id).toBe("undeclared")
+})
+
+test("keeps purpose filtering intact for models without a benchmark", () => {
+  const other = { ...make("other", 1), capabilities: { ...make("other", 1).capabilities, purposes: ["vision" as const] } }
+  expect(rankOffers([other], "coding", "all")).toEqual([])
+})
+
 test("excludes unknown-price and non-text offers from recommendations", () => {
   const unknown = { ...make("router", 0, 90), pricing: { input: 0, output: 0, unknown: true } }
   const image = { ...make("image", 0, 95), capabilities: { ...make("image", 0).capabilities, outputModalities: ["image"] } }

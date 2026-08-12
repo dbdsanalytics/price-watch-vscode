@@ -9,6 +9,8 @@ import type { AgentMetadata } from "./agents/discovery"
 import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
 import { mergeHistory } from "./domain/history"
+import { carryForwardOffers } from "./domain/snapshots"
+import { shouldRunAi } from "./domain/ai-schedule"
 import { enrichProviderBenchmarks } from "./domain/benchmarks"
 import { BENCHMARK_CACHE_KEY, loadBenchmarks } from "./domain/benchmark-cache"
 import type { ModelOffer } from "./domain/model"
@@ -24,7 +26,7 @@ const ZEN_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packag
 const GO_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx"
 // v0.2.0 persisted invalid OpenRouter sentinel prices. Keep the corrected data
 // in a fresh namespace so those values cannot reappear after an update or sync.
-const HISTORY_KEY = "priceWatch.history.v3", SNAPSHOT_KEY = "priceWatch.snapshots.v3"
+const HISTORY_KEY = "priceWatch.history.v3", SNAPSHOT_KEY = "priceWatch.snapshots.v3", AI_LAST_RUN_KEY = "priceWatch.aiLastRun.v1"
 const secretKey = (provider: string) => `priceWatch.account.${provider}`
 let panel: vscode.WebviewPanel | undefined, statusBar: vscode.StatusBarItem, running: Promise<void> | undefined
 let state: DashboardState = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 }
@@ -61,16 +63,20 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
     const benchmarkSnapshot=openRouterKey
       ? await loadBenchmarks(context.globalState,openRouterKey,manual,fetchOpenRouterBenchmarks)
       : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
-    const snapshots = enrichProviderBenchmarks(await fetchAllProviders({
+    const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
       openrouter: fetchOpenRouterCatalog,
       "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
       "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers,
-    }),benchmarkSnapshot)
+    }),benchmarkSnapshot))
     const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
     const changes = diffOffers(previous, successful)
     state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() }
+    const settings = vscode.workspace.getConfiguration("priceWatch")
     const aiKey = openRouterKey
-    if (aiKey && (manual || changes.length > 0)) try { state.ai = await aiDashboardSummary(aiKey, state.agents, changes, vscode.workspace.getConfiguration("priceWatch").get<string>("aiModel", "openrouter/free")) } catch (error) { state.ai = aiFailure(error) }
+    if (aiKey && shouldRunAi({ lastAt: context.globalState.get<number>(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get<number>("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
+      try { state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get<string>("aiModel", "openrouter/free")) } catch (error) { state.ai = aiFailure(error) }
+      await context.globalState.update(AI_LAST_RUN_KEY, Date.now())
+    }
     await context.globalState.update(HISTORY_KEY, state.history)
     await context.globalState.update(SNAPSHOT_KEY, snapshots)
     if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch öffnen?`, "Öffnen").then((choice)=>{ if (choice) void vscode.commands.executeCommand("priceWatch.open") })

@@ -68,7 +68,7 @@
           "type": "number",
           "default": 6,
           "minimum": 1,
-          "description": "Wie oft die kostenlose KI die Preise kommentiert (in Stunden). Hinweis: kostenlose OpenRouter-Modelle haben tägliche Limits."
+          "description": "Mindestabstand zwischen zwei automatischen KI-Kommentaren (in Stunden). Ein manuelles Aktualisieren kommentiert immer. Hinweis: kostenlose OpenRouter-Modelle haben tägliche Limits."
         },
         "priceWatch.aiModel": {
           "type": "string",

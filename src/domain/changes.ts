@@ -11,6 +11,9 @@ export function diffOffers(previous: ModelOffer[], next: ModelOffer[], at = Date
   const changes: PriceChange[] = []
   for (const offer of next) {
     const old = before.get(offerKey(offer)); if (!old) continue
+    // Unbekannte Preise stehen intern auf 0. Ein Vergleich damit meldet den
+    // Platzhalter als echten Preissturz und beim nächsten Lauf als Anstieg.
+    if (offer.pricing.unknown || old.pricing.unknown) continue
     for (const dimension of dimensions) {
       const prior = old.pricing[dimension] ?? 0; const current = offer.pricing[dimension] ?? 0
       if (prior === current) continue
