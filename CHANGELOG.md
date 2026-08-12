@@ -1,5 +1,13 @@
 # Changelog
 
+## Unveröffentlicht
+
+- Behält bei einem Anbieterausfall die zuletzt bekannten Preise samt Zeitstempel, statt Modelle und Vergleichsbasis zu verlieren.
+- Wertet `priceWatch.aiEveryHours` tatsächlich aus; automatische KI-Kommentare halten den Abstand ein, manuelles Aktualisieren nicht.
+- Meldet Modelle mit unbekanntem Preis nicht mehr als Preissturz und anschließenden Anstieg.
+- Nimmt Modelle mit gemessenem Coding-Benchmark auch dann ins Coding-Ranking auf, wenn die Anbieterbeschreibung den Zweck nicht nennt.
+- Entfernt den ungenutzten Preis-, KI- und Config-Code aus Version 0.1.
+
 ## 0.2.1 – 2026-08-12
 
 - Ergänzt eine getrennte, ausschließlich lesende OpenRouter-Management-Verbindung für Gesamtguthaben und API-Key-Verbrauch.

@@ -1,6 +1,18 @@
 import type { ModelOffer } from "../domain/model"
 import type { ProviderId } from "../domain/provider"
-import { norm, toUsd } from "../prices"
+
+/** Modellnamen aus der Doku auf eine vergleichbare Form bringen ("GPT 5.6 Luna (≤ 272K)" → "gpt-5.6-luna"). */
+export function norm(name: string): string {
+  return String(name).toLowerCase().replace(/\(.*\)/g, "").replace(/[^a-z0-9.]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
+}
+
+/** Dollar-Zelle der Preistabelle lesen; "Free", "-" und Leerwerte gelten als 0. */
+export function toUsd(cell: string | undefined): number {
+  const value = String(cell ?? "").trim()
+  if (!value || value === "-") return 0
+  const parsed = Number.parseFloat(value.replace("$", ""))
+  return Number.isNaN(parsed) ? 0 : parsed
+}
 
 const cells = (line: string) => line.split("|").slice(1, -1).map((cell) => cell.trim().replace(/`/g, ""))
 

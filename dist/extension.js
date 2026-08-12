@@ -182,6 +182,7 @@ function diffOffers(previous, next, at = Date.now()) {
   for (const offer of next) {
     const old = before.get(offerKey(offer));
     if (!old) continue;
+    if (offer.pricing.unknown || old.pricing.unknown) continue;
     for (const dimension of dimensions) {
       const prior = old.pricing[dimension] ?? 0;
       const current = offer.pricing[dimension] ?? 0;
@@ -202,6 +203,24 @@ function mergeHistory(local, incoming, now = Date.now()) {
   const merged = /* @__PURE__ */ new Map();
   for (const event of [...local, ...incoming]) if (event.at >= cutoff) merged.set(event.id, event);
   return [...merged.values()].sort((a, b) => b.at - a.at);
+}
+
+// src/domain/snapshots.ts
+function carryForwardOffers(previous, fresh) {
+  const known = new Map(previous.map((snapshot) => [snapshot.provider, snapshot]));
+  return fresh.map((snapshot) => {
+    if (!snapshot.error || snapshot.offers.length) return snapshot;
+    const last = known.get(snapshot.provider);
+    if (!last?.offers.length) return snapshot;
+    return { ...snapshot, offers: last.offers, checkedAt: last.checkedAt };
+  });
+}
+
+// src/domain/ai-schedule.ts
+function shouldRunAi({ lastAt, now, everyHours, manual, hasChanges }) {
+  if (manual) return true;
+  if (!hasChanges) return false;
+  return lastAt === null || now - lastAt >= Math.max(1, everyHours) * 36e5;
 }
 
 // src/domain/benchmarks.ts
@@ -286,7 +305,8 @@ function assessAgent(agent, offers) {
 
 // src/domain/ranking.ts
 function rankOffers(offers, purpose, priceMode) {
-  return offers.filter((offer) => !offer.pricing.unknown && offer.capabilities.outputModalities.includes("text")).filter((offer) => offer.capabilities.purposes.includes(purpose)).filter((offer) => {
+  const fitsPurpose = (offer) => offer.capabilities.purposes.includes(purpose) || purpose === "coding" && offer.benchmarks?.coding !== void 0;
+  return offers.filter((offer) => !offer.pricing.unknown && offer.capabilities.outputModalities.includes("text")).filter(fitsPurpose).filter((offer) => {
     const free = offer.pricing.input + offer.pricing.output === 0;
     return priceMode === "all" || (priceMode === "free" ? free : !free);
   }).map((offer) => {
@@ -381,7 +401,8 @@ function panelHtml(state2) {
   const nonce = (0, import_crypto.randomBytes)(16).toString("base64"), offers = state2.snapshots.flatMap((snapshot) => snapshot.offers), free = offers.filter((offer) => isFreePricing(offer.pricing)).length;
   const assessments = state2.agents.map((agent) => assessAgent(agent, offers)), preview = assessments.slice(0, 4);
   const modelRows = offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-provider="${offer.provider}" data-price="${priceClass(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small></td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${offer.pricing.unknown ? "Preis unbekannt" : money(offer.pricing.input)}</span></td><td><span class="price price-${priceClass(offer)}">${offer.pricing.unknown ? "Preis unbekannt" : money(offer.pricing.output)}</span></td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("");
-  const providerErrors = state2.snapshots.filter((snapshot) => snapshot.error).map((snapshot) => `<div class="notice error">${esc(snapshot.provider)}: ${esc(snapshot.error?.message)}</div>`).join("");
+  const stamp = (at) => new Date(at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+  const providerErrors = state2.snapshots.filter((snapshot) => snapshot.error).map((snapshot) => `<div class="notice error">${esc(snapshot.provider)}: ${esc(snapshot.error?.message)}${snapshot.offers.length ? ` \xB7 zeigt weiterhin die Preise vom ${esc(stamp(snapshot.checkedAt))}` : ""}</div>`).join("");
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">\xDCbersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header>${providerErrors}<main>
   <section class="view" id="overview"><div class="metrics"><span><strong>${offers.length}</strong>Modelle</span><span><strong>${free}</strong>kostenlos</span><span><strong>${state2.history.length}</strong>\xC4nderungen</span><span><strong>${state2.agents.length}</strong>Agenten</span></div><div class="insight"><strong>\u2726 KI-Fazit</strong><span>${esc(state2.ai?.text ?? "Preis- und Agentendaten werden lokal ausgewertet.")}</span></div><div class="dashboard"><section class="card rankings"><h2>Beste Modelle f\xFCr deinen Zweck</h2>${renderRanks(offers)}</section><section class="card agents-card"><div class="card-head"><h2>Deine Agenten</h2><button data-view="agents">Alle ${assessments.length}</button></div>${preview.length ? preview.map((item) => renderAgentRow(item, true)).join("") : `<p class="empty">Keine Agenten erkannt</p>`}${assessments.length > 4 ? `<button class="more" data-view="agents">Mehr Agenten anzeigen</button>` : ""}</section><section class="card accounts-card"><div class="card-head"><h2>Konten &amp; Limits</h2><button data-view="accounts">Details</button></div>${state2.accounts.length ? state2.accounts.map(renderAccountSummary).join("") : `<p class="empty">Noch kein Konto verbunden</p>`}</section></div></section>
   <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${offers.length} Angebote von OpenRouter, Zen und Go</p></div></div><div class="filters"><input id="search" placeholder="Modelle durchsuchen"><select id="provider"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose"><option value="">Alle F\xE4higkeiten</option>${Object.entries(labels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="table-wrap"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th><th>Benchmark</th></tr></thead><tbody>${modelRows}</tbody></table></div></section>
@@ -395,17 +416,6 @@ var CSS = `
 @media(max-width:1050px){.dashboard{grid-template-columns:minmax(340px,1.5fr) minmax(240px,1fr)}.accounts-card{grid-column:2}.filters{grid-template-columns:1fr 1fr}.account-metrics{grid-template-columns:1fr 1fr}.managed-key{grid-template-columns:1fr auto 1fr 1fr}.managed-key>div:last-child{display:none}}
 @media(max-width:700px){.topbar{gap:12px;overflow-x:auto}.topbar nav{gap:12px}.dashboard{grid-template-columns:1fr}.accounts-card{grid-column:auto}.insight{display:block}.insight strong{display:block}.rank-columns,.connection-grid{grid-template-columns:1fr}.rank-columns{padding-left:0}.filters,.account-metrics{grid-template-columns:1fr}.agent-row{grid-template-columns:1fr;gap:5px}.agent-identity{justify-content:space-between}.agent-result{text-align:left}.managed-key{grid-template-columns:1fr auto}.managed-key>div{display:none}.managed-key>.key-name{display:block}.account-provider-section>header{align-items:flex-start}.account-summary{display:block}.account-summary .status{display:block;max-width:none;margin-top:4px;text-align:left}.managed-keys>header span{display:none}}
 `;
-
-// src/prices.ts
-function norm(name) {
-  return String(name).toLowerCase().replace(/\(.*\)/g, "").replace(/[^a-z0-9.]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-}
-function toUsd(cell) {
-  const v = String(cell ?? "").trim();
-  if (!v || v === "-") return 0;
-  const n = parseFloat(v.replace("$", ""));
-  return Number.isNaN(n) ? 0 : n;
-}
 
 // src/ai.ts
 var OR_CHAT = "https://openrouter.ai/api/v1/chat/completions";
@@ -442,6 +452,15 @@ async function fetchAllProviders(loaders) {
 }
 
 // src/providers/opencode-docs.ts
+function norm(name) {
+  return String(name).toLowerCase().replace(/\(.*\)/g, "").replace(/[^a-z0-9.]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+function toUsd(cell) {
+  const value = String(cell ?? "").trim();
+  if (!value || value === "-") return 0;
+  const parsed = Number.parseFloat(value.replace("$", ""));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
 var cells = (line) => line.split("|").slice(1, -1).map((cell) => cell.trim().replace(/`/g, ""));
 function idsFromDocument(mdx) {
   const ids = /* @__PURE__ */ new Map();
@@ -558,6 +577,7 @@ var ZEN_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages
 var GO_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx";
 var HISTORY_KEY = "priceWatch.history.v3";
 var SNAPSHOT_KEY = "priceWatch.snapshots.v3";
+var AI_LAST_RUN_KEY = "priceWatch.aiLastRun.v1";
 var secretKey = (provider) => `priceWatch.account.${provider}`;
 var panel;
 var statusBar;
@@ -599,19 +619,23 @@ async function refresh(context, manual) {
     const previous = state.snapshots.flatMap((snapshot) => snapshot.offers);
     const openRouterKey = await context.secrets.get(secretKey("openrouter"));
     const benchmarkSnapshot = openRouterKey ? await loadBenchmarks(context.globalState, openRouterKey, manual, fetchOpenRouterBenchmarks) : context.globalState.get(BENCHMARK_CACHE_KEY) ?? null;
-    const snapshots = enrichProviderBenchmarks(await fetchAllProviders({
+    const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
       openrouter: fetchOpenRouterCatalog,
       "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
       "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers
-    }), benchmarkSnapshot);
+    }), benchmarkSnapshot));
     const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers);
     const changes = diffOffers(previous, successful);
     state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() };
+    const settings = vscode.workspace.getConfiguration("priceWatch");
     const aiKey = openRouterKey;
-    if (aiKey && (manual || changes.length > 0)) try {
-      state.ai = await aiDashboardSummary(aiKey, state.agents, changes, vscode.workspace.getConfiguration("priceWatch").get("aiModel", "openrouter/free"));
-    } catch (error) {
-      state.ai = aiFailure(error);
+    if (aiKey && shouldRunAi({ lastAt: context.globalState.get(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
+      try {
+        state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get("aiModel", "openrouter/free"));
+      } catch (error) {
+        state.ai = aiFailure(error);
+      }
+      await context.globalState.update(AI_LAST_RUN_KEY, Date.now());
     }
     await context.globalState.update(HISTORY_KEY, state.history);
     await context.globalState.update(SNAPSHOT_KEY, snapshots);

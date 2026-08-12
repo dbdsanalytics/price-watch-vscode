@@ -1,5 +1,22 @@
 import { describe, expect, test } from "bun:test"
-import { parseGoDocument, parseZenDocument } from "../src/providers/opencode-docs"
+import { norm, parseGoDocument, parseZenDocument, toUsd } from "../src/providers/opencode-docs"
+
+describe("norm", () => {
+  test("entfernt Klammer-Inhalte und normalisiert", () => {
+    expect(norm("GPT 5.6 Luna (≤ 272K tokens)")).toBe("gpt-5.6-luna")
+    expect(norm("DeepSeek V4 Flash")).toBe("deepseek-v4-flash")
+    expect(norm("Claude Sonnet 4.6")).toBe("claude-sonnet-4.6")
+  })
+})
+
+describe("toUsd", () => {
+  test("parst Dollar-Zellen", () => {
+    expect(toUsd("$0.14")).toBe(0.14)
+    expect(toUsd("Free")).toBe(0)
+    expect(toUsd("-")).toBe(0)
+    expect(toUsd(undefined)).toBe(0)
+  })
+})
 
 const endpoints = `| Model | Model ID | Endpoint |
 | --- | --- | --- |
