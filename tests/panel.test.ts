@@ -6,6 +6,8 @@ test("renders safe responsive four-view dashboard", () => {
   expect(html).toContain("grid-template-columns:2fr 1fr 1fr")
   expect(html).toContain("data-view=\"models\"")
   expect(html).toContain("Konten &amp; Limits")
+  expect(html).toContain("Reasoning")
+  expect(html).toContain('id="purpose"')
   expect(html).toContain("content-security-policy")
   expect(html).not.toContain("onclick=")
 })
