@@ -1,6 +1,6 @@
 # Changelog
 
-## Unveröffentlicht
+## 0.2.2 – 2026-08-12
 
 - Behält bei einem Anbieterausfall die zuletzt bekannten Preise samt Zeitstempel, statt Modelle und Vergleichsbasis zu verlieren.
 - Wertet `priceWatch.aiEveryHours` tatsächlich aus; automatische KI-Kommentare halten den Abstand ein, manuelles Aktualisieren nicht.
