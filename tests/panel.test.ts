@@ -59,3 +59,13 @@ test("meldet einen Fehler der Verarbeitung sichtbar im Panel", () => {
 test("zeigt keine Fehlerzeile, wenn die Aktualisierung durchlief", () => {
   expect(panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })).not.toContain("notice error")
 })
+
+test("beschriftet Arena-Kategorien und zeigt die ELO-Wertung", () => {
+  const offer: any = { provider: "openrouter", id: "z-ai/glm-5.2", name: "GLM 5.2", pricing: { input: 0.49, output: 1.54 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: 1000, purposes: ["coding"] },
+    benchmarks: { source: "OpenRouter Benchmarks", match: "direct", details: [{ name: "arena_website", score: 59.6, elo: 1332, sampleCount: 4487 }] } }
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain("Arena · Website")
+  expect(html).not.toContain("arena_website")
+  expect(html).toContain("ELO 1332")
+})

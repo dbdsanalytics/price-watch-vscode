@@ -15,7 +15,7 @@ export function enrichProviderBenchmarks(snapshots: ProviderSnapshot[], api?:Ope
   const detailsByModel=new Map<string,NonNullable<BenchmarkScores["details"]>>()
   for (const item of api?.items ?? []) {
     const details=detailsByModel.get(item.modelId) ?? []
-    details.push({ name:item.benchmark, score:item.score, costPerTaskUsd:item.costPerTaskUsd, sampleCount:item.sampleCount, lastRunAt:item.lastRunAt })
+    details.push({ name:item.benchmark, score:item.score, elo:item.elo, costPerTaskUsd:item.costPerTaskUsd, sampleCount:item.sampleCount, lastRunAt:item.lastRunAt })
     detailsByModel.set(item.modelId,details)
   }
   const withApi=snapshots.map((snapshot)=>snapshot.provider !== "openrouter" ? snapshot : ({ ...snapshot, offers:snapshot.offers.map((offer):ModelOffer=>{
