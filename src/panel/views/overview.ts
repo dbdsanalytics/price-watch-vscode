@@ -10,6 +10,6 @@ export function renderRanks(offers: ModelOffer[]): string {
       const title = mode === "free" ? "Kostenlos" : "Kostenpflichtig"
       return `<section class="rank-column price-${mode}"><h4><i></i>${title}</h4>${ranked.length ? `<ol>${ranked.map((item)=>`<li><strong>${esc(item.offer.name)}</strong><small>Score ${item.score} · ${money(item.offer.pricing.input)} / ${money(item.offer.pricing.output)}</small></li>`).join("")}</ol>` : `<p class="empty">Keine belastbar bewerteten Modelle</p>`}</section>`
     }
-    return `<details class="purpose-block purpose-${purpose}"${index===0 ? " open" : ""}><summary><span>${purposeIcon[purpose]}</span><strong>${label}</strong></summary><div class="rank-columns">${column("free")}${column("paid")}</div></details>`
+    return `<details class="purpose-block purpose-${purpose}" data-key="purpose-${purpose}"${index===0 ? " open" : ""}><summary><span>${purposeIcon[purpose]}</span><strong>${label}</strong></summary><div class="rank-columns">${column("free")}${column("paid")}</div></details>`
   }).join("")
 }

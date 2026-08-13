@@ -17,7 +17,7 @@ import { BENCHMARK_CACHE_KEY, loadBenchmarks } from "./domain/benchmark-cache"
 import type { ModelOffer } from "./domain/model"
 import type { ProviderSnapshot } from "./domain/provider"
 import type { DashboardState } from "./domain/dashboard"
-import { panelHtml } from "./panel/index"
+import { fragments, panelHtml } from "./panel/index"
 import { aiDashboardSummary, aiFailure } from "./ai"
 import { fetchAllProviders } from "./providers/fetch-all"
 import { fetchOpenCodeDocument, parseGoDocument, parseZenDocument, requireOffers } from "./providers/opencode-docs"
@@ -54,7 +54,11 @@ function localAgents(): AgentMetadata[] {
   return mergeAgents(globalScope.agents,...projectScopes)
 }
 
-function refreshPanel(): void { if (panel) panel.webview.html = panelHtml(state) }
+// Das Dokument wird nur beim Oeffnen gesetzt. Ein erneutes Zuweisen von
+// webview.html laedt die Seite neu und verwirft Filter, Scrollposition und die
+// gewaehlte Ansicht — genau das soll der Fragmenttausch verhindern.
+function refreshPanel(): void { if (panel) void panel.webview.postMessage({ type: "fragments", fragments: fragments(state) }) }
+function buildPanel(): void { if (panel) panel.webview.html = panelHtml(state) }
 function updateStatus(): void { statusBar.text = `$(pulse) Preise ${state.snapshots.reduce((sum,s)=>sum+s.offers.length,0)} · ${state.history.length} Δ`; statusBar.tooltip = state.snapshots.map((s)=>`${s.provider}: ${s.error ? s.error.message : `${s.offers.length} Modelle`}`).join("\n"); statusBar.show() }
 
 async function refresh(context: vscode.ExtensionContext, manual: boolean): Promise<void> {
@@ -168,7 +172,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.globalState.setKeysForSync([HISTORY_KEY])
   await refreshConnectedAccounts(context)
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100); statusBar.command = "priceWatch.open"; context.subscriptions.push(statusBar)
-  context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => { if (!panel) { panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }); panel.onDidDispose(()=>panel=undefined); panel.webview.onDidReceiveMessage((message)=>{ if (message?.type === "connect") void connectAccount(context); if (message?.type === "disconnect") void disconnectAccount(context); if (message?.type === "connect-management") void connectOpenRouterManagement(context); if (message?.type === "disconnect-management") void disconnectOpenRouterManagement(context) }) } else panel.reveal(); refreshPanel() }), vscode.commands.registerCommand("priceWatch.refresh", ()=>refresh(context,true)), vscode.commands.registerCommand("priceWatch.setKey", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.disconnectAccount", ()=>disconnectAccount(context)), vscode.commands.registerCommand("priceWatch.connectOpenRouterManagement", ()=>connectOpenRouterManagement(context)))
+  context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => { if (!panel) { panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }); panel.onDidDispose(()=>panel=undefined); panel.webview.onDidReceiveMessage((message)=>{ if (message?.type === "connect") void connectAccount(context); if (message?.type === "disconnect") void disconnectAccount(context); if (message?.type === "connect-management") void connectOpenRouterManagement(context); if (message?.type === "disconnect-management") void disconnectOpenRouterManagement(context); if (message?.type === "ready") refreshPanel() }); buildPanel() } else { panel.reveal(); refreshPanel() } }), vscode.commands.registerCommand("priceWatch.refresh", ()=>refresh(context,true)), vscode.commands.registerCommand("priceWatch.setKey", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.disconnectAccount", ()=>disconnectAccount(context)), vscode.commands.registerCommand("priceWatch.connectOpenRouterManagement", ()=>connectOpenRouterManagement(context)))
   const hours = Math.max(1, vscode.workspace.getConfiguration("priceWatch").get<number>("checkIntervalHours",1)); const timer = setInterval(()=>void refresh(context,false),hours*3_600_000); context.subscriptions.push({ dispose:()=>clearInterval(timer) })
   updateStatus(); void refresh(context,false)
 }

@@ -33,7 +33,7 @@ export function tierDetails(offer: ModelOffer): string {
   if (!tiers.length) return ""
   const rows = [`${esc(offer.tier ?? "Basis")} · ${esc(money(offer.pricing.input))} / ${esc(money(offer.pricing.output))}`,
     ...tiers.map((tier) => `${esc(tier.label)} · ${esc(money(tier.input))} / ${esc(money(tier.output))}`)]
-  return `<details class="tier-details"><summary>${tiers.length + 1} Preisstufen</summary>${rows.map((row) => `<article>${row}</article>`).join("")}</details>`
+  return `<details class="tier-details" data-key="tier-${esc(offer.id)}"><summary>${tiers.length + 1} Preisstufen</summary>${rows.map((row) => `<article>${row}</article>`).join("")}</details>`
 }
 export function benchmarkCell(offer: ModelOffer): string {
   const scores = offer.benchmarks
@@ -43,7 +43,7 @@ export function benchmarkCell(offer: ModelOffer): string {
   const detailLabel:Record<string,string>={ gpqa_diamond:"GPQA Diamond", tau_bench_verified_airline:"τ²-Bench Airline", search_browsecomp:"BrowseComp", search_dsqa:"DeepSearchQA", search_hle:"Search HLE", search_widesearch:"WideSearch",
     arena_codecategories:"Arena · Code", arena_website:"Arena · Website", arena_uicomponent:"Arena · UI-Komponenten", arena_dataviz:"Arena · Datenvisualisierung", arena_svg:"Arena · SVG", arena_gamedev:"Arena · Spiele", arena_3d:"Arena · 3D", arena_asciiart:"Arena · ASCII-Art", arena_graphicdesign:"Arena · Grafikdesign", arena_logo:"Arena · Logo", arena_image:"Arena · Bild", arena_imageediting:"Arena · Bildbearbeitung" }
   const details=(scores.details ?? []).map((detail)=>`<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE",{ maximumFractionDigits:1 }).format(detail.score)} %</span>${detail.elo!==undefined?`<small>ELO ${esc(detail.elo)}</small>`:""}${detail.sampleCount!==undefined?`<small>${esc(detail.sampleCount)} ${detail.elo!==undefined?"Duelle":"Aufgaben"}</small>`:""}${detail.costPerTaskUsd!==undefined?`<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>`:""}</article>`).join("")
-  return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${values.map(([label,value])=>`<span><b>${label}</b> ${esc(value)}</span>`).join("")}</div>${details?`<details class="benchmark-details"><summary>${esc(scores.details?.length)} Einzelbenchmarks</summary>${details}</details>`:""}<small>${provenance}</small></div>`
+  return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${values.map(([label,value])=>`<span><b>${label}</b> ${esc(value)}</span>`).join("")}</div>${details?`<details class="benchmark-details" data-key="bench-${esc(offer.id)}"><summary>${esc(scores.details?.length)} Einzelbenchmarks</summary>${details}</details>`:""}<small>${provenance}</small></div>`
 }
 
 /** Der innere Inhalt von <tbody> — das Fragment, das bei Preisaenderungen tauscht. */

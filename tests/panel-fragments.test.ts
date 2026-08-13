@@ -32,3 +32,14 @@ test("ein geaenderter Preis beruehrt nur das Modell-Fragment", () => {
 test("die Metrikzeile folgt der Modellzahl", () => {
   expect(fragments(state([offer("a", 1), offer("b", 2)])).metrics).toContain("2")
 })
+
+// Das Skript ist eine Zeichenkette und laeuft im Test nicht. Geprueft wird
+// deshalb, dass die Bausteine vorhanden sind, ohne die der Tausch die
+// Bedienung wieder wegwerfen wuerde.
+test("das Webview-Skript tauscht nur geaenderte Fragmente", () => {
+  const html = panelHtml(state([offer("a", 1)]))
+  expect(html).toContain("addEventListener('message'")
+  expect(html).toContain("shown[id] === html")
+  expect(html).toContain("data-fragment=")
+  expect(html).not.toContain("onclick=")
+})

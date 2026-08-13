@@ -3,6 +3,7 @@ import { assessAgent, type AgentAssessment } from "../agents/assessment"
 import type { DashboardState } from "../domain/dashboard"
 import { isFreePricing, type ModelOffer } from "../domain/model"
 import { esc, stamp } from "./format"
+import { SCRIPT } from "./script"
 import { BENCHMARK_CSS, CSS } from "./styles"
 import { renderAgentGroups, renderAgentRow } from "./views/agents"
 import { renderAccountSummary, renderOpenRouterSection, renderProviderSection } from "./views/accounts"
@@ -60,4 +61,3 @@ export function panelHtml(state: DashboardState): string {
   <section class="view" id="accounts" hidden><div class="page-head"><div><h1>Konten &amp; Limits</h1><p>Secrets bleiben ausschließlich im lokalen VS Code Secret Store.</p></div></div><div class="provider-sections" data-fragment="accounts">${accountsInner(view)}</div></section></main><script nonce="${nonce}">${SCRIPT}</script></body></html>`
 }
 
-const SCRIPT = `const vscode=acquireVsCodeApi();const show=id=>{document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==id);document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));scrollTo(0,0)};document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.view)));document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>vscode.postMessage({type:b.dataset.action})));const filter=()=>{const q=search.value.toLowerCase(),p=provider.value,c=price.value,u=purpose.value;document.querySelectorAll('[data-model]').forEach(r=>r.hidden=!(r.dataset.model.includes(q)&&(!p||r.dataset.provider===p)&&(!c||r.dataset.price===c)&&(!u||r.dataset.model.includes(u))))};['search','provider','price','purpose'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',filter));`
