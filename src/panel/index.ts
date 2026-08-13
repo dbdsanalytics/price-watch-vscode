@@ -1,0 +1,28 @@
+import { randomBytes } from "crypto"
+import { assessAgent } from "../agents/assessment"
+import type { DashboardState } from "../domain/dashboard"
+import { isFreePricing } from "../domain/model"
+import { esc, stamp } from "./format"
+import { BENCHMARK_CSS, CSS } from "./styles"
+import { renderAgentGroups, renderAgentRow } from "./views/agents"
+import { renderAccountSummary, renderOpenRouterSection, renderProviderSection } from "./views/accounts"
+import { modelFilters, modelRows } from "./views/models"
+import { renderRanks } from "./views/overview"
+
+export function panelHtml(state: DashboardState): string {
+  const nonce = randomBytes(16).toString("base64"), offers = state.snapshots.flatMap((snapshot)=>snapshot.offers), free = offers.filter((offer)=>isFreePricing(offer.pricing)).length
+  const assessments = state.agents.map((agent)=>assessAgent(agent,offers)), preview = assessments.slice(0,4)
+  // Ein Fehler in der Verarbeitung betrifft alle Anbieter und steht deshalb vor
+  // den einzelnen Anbietermeldungen.
+  const refreshError = state.refreshError ? `<div class="notice error">Aktualisierung fehlgeschlagen: ${esc(state.refreshError)}</div>` : ""
+  const providerErrors = state.snapshots.filter((snapshot)=>snapshot.error).map((snapshot)=>`<div class="notice error">${esc(snapshot.provider)}: ${esc(snapshot.error?.message)}${snapshot.offers.length ? ` · zeigt weiterhin die Preise vom ${esc(stamp(snapshot.checkedAt))}` : ""}</div>`).join("")
+  // Verdaechtige Daten, kein Ausfall: eigene Farbe, nicht die Fehlerdarstellung.
+  const providerWarnings = state.snapshots.filter((snapshot)=>snapshot.warning).map((snapshot)=>`<div class="notice warn">${esc(snapshot.provider)}: ${esc(snapshot.warning)}</div>`).join("")
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">Übersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header>${refreshError}${providerErrors}${providerWarnings}<main>
+  <section class="view" id="overview"><div class="metrics"><span><strong>${offers.length}</strong>Modelle</span><span><strong>${free}</strong>kostenlos</span><span><strong>${state.history.length}</strong>Änderungen</span><span><strong>${state.agents.length}</strong>Agenten</span></div><div class="insight"><strong>✦ KI-Fazit</strong><span>${esc(state.ai?.text ?? "Preis- und Agentendaten werden lokal ausgewertet.")}</span></div><div class="dashboard"><section class="card rankings"><h2>Beste Modelle für deinen Zweck</h2>${renderRanks(offers)}</section><section class="card agents-card"><div class="card-head"><h2>Deine Agenten</h2><button data-view="agents">Alle ${assessments.length}</button></div>${preview.length ? preview.map((item)=>renderAgentRow(item,true)).join("") : `<p class="empty">Keine Agenten erkannt</p>`}${assessments.length>4?`<button class="more" data-view="agents">Mehr Agenten anzeigen</button>`:""}</section><section class="card accounts-card"><div class="card-head"><h2>Konten &amp; Limits</h2><button data-view="accounts">Details</button></div>${state.accounts.length ? state.accounts.map(renderAccountSummary).join("") : `<p class="empty">Noch kein Konto verbunden</p>`}</section></div></section>
+  <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div class="table-wrap"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>Fähigkeiten</th><th>Benchmark</th></tr></thead><tbody>${modelRows(offers)}</tbody></table></div></section>
+  <section class="view" id="agents" hidden><div class="page-head"><div><h1>Deine Agenten</h1><p>Nach Handlungsbedarf und Qualität geordnet</p></div></div><div class="agent-groups">${renderAgentGroups(assessments)}</div></section>
+  <section class="view" id="accounts" hidden><div class="page-head"><div><h1>Konten &amp; Limits</h1><p>Secrets bleiben ausschließlich im lokalen VS Code Secret Store.</p></div></div><div class="provider-sections">${renderOpenRouterSection(state.accounts,state.openRouterManagement)}${renderProviderSection("opencode-zen",state.accounts)}${renderProviderSection("opencode-go",state.accounts)}</div></section></main><script nonce="${nonce}">${SCRIPT}</script></body></html>`
+}
+
+const SCRIPT = `const vscode=acquireVsCodeApi();const show=id=>{document.querySelectorAll('.view').forEach(v=>v.hidden=v.id!==id);document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));scrollTo(0,0)};document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.view)));document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>vscode.postMessage({type:b.dataset.action})));const filter=()=>{const q=search.value.toLowerCase(),p=provider.value,c=price.value,u=purpose.value;document.querySelectorAll('[data-model]').forEach(r=>r.hidden=!(r.dataset.model.includes(q)&&(!p||r.dataset.provider===p)&&(!c||r.dataset.price===c)&&(!u||r.dataset.model.includes(u))))};['search','provider','price','purpose'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',filter));`

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { panelHtml } from "../src/panel"
+import { panelHtml } from "../src/panel/index"
 
 test("renders safe responsive four-view dashboard", () => {
   const html = panelHtml({ snapshots: [], history: [], agents: [{ name: "reviewer", description: "Review", model: "openrouter/x", tools: [], prompt: "local only" }], accounts: [], ai: null, updatedAt: 0 })
