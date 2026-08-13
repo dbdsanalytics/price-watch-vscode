@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4 – 2026-08-13
+
+- Zeigt bei OpenCode Go, wie viele Anfragen das Abo hergibt und wie viel Nutzung enthalten ist — bei Go entscheidet das Kontingent, nicht der Token-Preis: Kimi K3 kostet je Token das Einundzwanzigfache von DeepSeek V4 Flash, liefert aber 323-mal weniger Anfragen.
+- Liest Anzahlen mit Tausendertrennzeichen korrekt; „2,150" kam bisher als 2 an.
+- Maskiert einfache Anführungszeichen und die Zahlenfelder der Benchmark-Daten in der Oberfläche.
+- Ergänzt `AGENTS.md` als geladenen Einstieg mit Wegweiser und den Regeln, deren Verletzung die Fehler dieser und der letzten Version verursacht hat.
+
 ## 0.2.3 – 2026-08-13
 
 - Zeigt für OpenCode Go keine erfundenen Preise mehr: Der Abschnitt „Usage limits" enthält zwei Tabellen, und die Anfragen je Zeitraum wurden als Dollarbeträge gelesen — GLM-5.2 erschien mit $880 statt $1.40, Grok 4.5 mit $120 statt $2.
