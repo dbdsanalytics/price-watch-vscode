@@ -10,7 +10,7 @@ import { rankOffers, type Purpose } from "./domain/ranking"
 
 export interface DashboardState { snapshots: ProviderSnapshot[]; history: PriceChange[]; agents: AgentMetadata[]; accounts: AccountStatus[]; openRouterManagement?: OpenRouterManagementStatus | null; ai: AiResult | null; updatedAt: number; refreshError?: string | null }
 
-const esc = (value: unknown) => String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")
+const esc = (value: unknown) => String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;")
 const count = (value: number) => new Intl.NumberFormat("de-DE").format(value)
 const money = (value: number) => `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 4 }).format(value)} $`
 const labels: Record<Purpose,string> = { coding:"Coding", language:"Sprache", reasoning:"Reasoning", vision:"Vision", tools:"Tools", allround:"Allround" }
@@ -35,8 +35,8 @@ function benchmarkCell(offer: ModelOffer): string {
   const provenance = scores.match === "base-model" ? "Identisches Basismodell" : scores.match === "local" ? "Lokaler Praxistest" : "Öffentlich bewertet"
   const detailLabel:Record<string,string>={ gpqa_diamond:"GPQA Diamond", tau_bench_verified_airline:"τ²-Bench Airline", search_browsecomp:"BrowseComp", search_dsqa:"DeepSearchQA", search_hle:"Search HLE", search_widesearch:"WideSearch",
     arena_codecategories:"Arena · Code", arena_website:"Arena · Website", arena_uicomponent:"Arena · UI-Komponenten", arena_dataviz:"Arena · Datenvisualisierung", arena_svg:"Arena · SVG", arena_gamedev:"Arena · Spiele", arena_3d:"Arena · 3D", arena_asciiart:"Arena · ASCII-Art", arena_graphicdesign:"Arena · Grafikdesign", arena_logo:"Arena · Logo", arena_image:"Arena · Bild", arena_imageediting:"Arena · Bildbearbeitung" }
-  const details=(scores.details ?? []).map((detail)=>`<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE",{ maximumFractionDigits:1 }).format(detail.score)} %</span>${detail.elo!==undefined?`<small>ELO ${detail.elo}</small>`:""}${detail.sampleCount!==undefined?`<small>${detail.sampleCount} ${detail.elo!==undefined?"Duelle":"Aufgaben"}</small>`:""}${detail.costPerTaskUsd!==undefined?`<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>`:""}</article>`).join("")
-  return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${values.map(([label,value])=>`<span><b>${label}</b> ${value}</span>`).join("")}</div>${details?`<details class="benchmark-details"><summary>${scores.details?.length} Einzelbenchmarks</summary>${details}</details>`:""}<small>${provenance}</small></div>`
+  const details=(scores.details ?? []).map((detail)=>`<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE",{ maximumFractionDigits:1 }).format(detail.score)} %</span>${detail.elo!==undefined?`<small>ELO ${esc(detail.elo)}</small>`:""}${detail.sampleCount!==undefined?`<small>${esc(detail.sampleCount)} ${detail.elo!==undefined?"Duelle":"Aufgaben"}</small>`:""}${detail.costPerTaskUsd!==undefined?`<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>`:""}</article>`).join("")
+  return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${values.map(([label,value])=>`<span><b>${label}</b> ${esc(value)}</span>`).join("")}</div>${details?`<details class="benchmark-details"><summary>${esc(scores.details?.length)} Einzelbenchmarks</summary>${details}</details>`:""}<small>${provenance}</small></div>`
 }
 
 function renderRanks(offers: ModelOffer[]): string {
