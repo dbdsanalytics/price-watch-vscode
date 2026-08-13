@@ -78,3 +78,26 @@ test("zeigt bei Go-Modellen das Kontingent statt nur den Token-Preis", () => {
   expect(html).toContain("158.150 Anfragen/Monat")
   expect(html).toContain("enthalten")
 })
+
+// TypeScript-Typen pruefen zur Laufzeit nichts: Die Zahlenfelder der
+// Benchmark-Details kommen ungefiltert aus JSON.parse und wurden roh
+// interpoliert. Die CSP faengt eingeschleustes Markup ab — sie ist die zweite
+// Verteidigungslinie, nicht die erste.
+test("maskiert auch einfache Anfuehrungszeichen", () => {
+  const offer: any = { provider: "openrouter", id: "x'y", name: "Modell 'Alpha'", pricing: { input: 1, output: 2 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1, purposes: ["coding"] } }
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).not.toContain("Modell 'Alpha'")
+  expect(html).toContain("&#39;")
+})
+
+test("laesst kein Markup aus Zahlenfeldern der API durch", () => {
+  const offer: any = { provider: "openrouter", id: "m", name: "M", pricing: { input: 1, output: 2 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1, purposes: ["coding"] },
+    benchmarks: { source: "s", match: "direct", intelligence: "<img src=x onerror=alert(1)>" as any,
+      details: [{ name: "gpqa_diamond", score: 1, sampleCount: "<b>roh</b>" as any, elo: "<i>roh</i>" as any }] } }
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).not.toContain("<img src=x")
+  expect(html).not.toContain("<b>roh</b>")
+  expect(html).not.toContain("<i>roh</i>")
+})
