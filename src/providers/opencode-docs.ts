@@ -1,4 +1,4 @@
-import type { ModelOffer } from "../domain/model"
+import type { ModelOffer, ModelQuota } from "../domain/model"
 import type { ProviderId } from "../domain/provider"
 
 /** Modellnamen aus der Doku auf eine vergleichbare Form bringen ("GPT 5.6 Luna (≤ 272K)" → "gpt-5.6-luna"). */
@@ -12,6 +12,13 @@ export function toUsd(cell: string | undefined): number {
   if (!value || value === "-") return 0
   const parsed = Number.parseFloat(value.replace("$", ""))
   return Number.isNaN(parsed) ? 0 : parsed
+}
+
+/** Anzahl aus einer Tabellenzelle; "2,150" darf nicht als 2 ankommen. */
+export function toCount(cell: string | undefined): number | undefined {
+  const value = String(cell ?? "").trim().replace(/[,\s]/g, "")
+  if (!/^\d+$/.test(value)) return undefined
+  return Number.parseInt(value, 10)
 }
 
 const cells = (line: string) => line.split("|").slice(1, -1).map((cell) => cell.trim().replace(/`/g, ""))
@@ -29,10 +36,27 @@ function idsFromDocument(mdx: string): Map<string, string> {
 /** Kopfzeile einer Preistabelle: fuehrt Modell UND Input/Output-Spalten. */
 const isPriceHeader = (row: string[]) => /^Model/i.test(row[0] ?? "") && row.some((cell) => /^Input$/i.test(cell)) && row.some((cell) => /^Output$/i.test(cell))
 
+const isRequestHeader = (row: string[]) => /^Model/i.test(row[0] ?? "") && row.some((cell) => /requests per/i.test(cell))
+
+/** Die Anfragen-Tabelle steht im selben Abschnitt wie die Preise, davor. */
+function requestQuota(mdx: string): Map<string, ModelQuota> {
+  const quota = new Map<string, ModelQuota>()
+  let inTable = false
+  for (const line of mdx.split("\n")) {
+    if (!line.startsWith("|")) continue
+    const row = cells(line)
+    if (/^Model/i.test(row[0] ?? "")) { inTable = isRequestHeader(row); continue }
+    if (!inTable || !row[0] || /^-+$/.test(row[0])) continue
+    quota.set(norm(row[0]), { requestsPer5Hours: toCount(row[1]), requestsPerWeek: toCount(row[2]), requestsPerMonth: toCount(row[3]) })
+  }
+  return quota
+}
+
 function parsePricing(mdx: string, provider: ProviderId): ModelOffer[] {
   const ids = idsFromDocument(mdx)
   const offers: ModelOffer[] = []
-  let pricing = false, inPriceTable = false
+  const requests = provider === "opencode-go" ? requestQuota(mdx) : new Map<string, ModelQuota>()
+  let pricing = false, inPriceTable = false, usageColumn = -1
   for (const line of mdx.split("\n")) {
     if (/^## (Pricing|Usage limits)/i.test(line)) { pricing = true; continue }
     if (pricing && /^## /.test(line)) break
@@ -40,7 +64,7 @@ function parsePricing(mdx: string, provider: ProviderId): ModelOffer[] {
     const row = cells(line)
     // Der Abschnitt kann mehrere Tabellen enthalten (Anfragen je Zeitraum,
     // dann Preise). Nur Zeilen unter einem Preis-Kopf sind Preise.
-    if (/^Model/i.test(row[0] ?? "")) { inPriceTable = isPriceHeader(row); continue }
+    if (/^Model/i.test(row[0] ?? "")) { inPriceTable = isPriceHeader(row); usageColumn = row.findIndex((cell) => /^Usage$/i.test(cell)); continue }
     if (!inPriceTable) continue
     if (!row[0] || /^-+$/.test(row[0])) continue
     const base = norm(row[0])
@@ -50,7 +74,10 @@ function parsePricing(mdx: string, provider: ProviderId): ModelOffer[] {
     // dieselbe ID. Die erste Zeile ist die Basisstufe; ihr Name traegt die
     // Stufe mit, sodass die Oberflaeche sie nicht verschweigt.
     if (offers.some((offer) => offer.id === id)) continue
-    offers.push({ provider, id, name: row[0], pricing: { input: toUsd(row[1]), output: toUsd(row[2]), cacheRead: toUsd(row[3]), cacheWrite: toUsd(row[4]) }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding", "tools"] } })
+    const included = usageColumn > 0 ? toUsd(row[usageColumn]) : 0
+    const counted = requests.get(base) ?? requests.get(base.replace(/-tokens$/, ""))
+    const quota: ModelQuota | undefined = included || counted ? { ...counted, ...(included ? { includedUsdPerMonth: included } : {}) } : undefined
+    offers.push({ provider, id, name: row[0], ...(quota ? { quota } : {}), pricing: { input: toUsd(row[1]), output: toUsd(row[2]), cacheRead: toUsd(row[3]), cacheWrite: toUsd(row[4]) }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding", "tools"] } })
   }
   return offers
 }

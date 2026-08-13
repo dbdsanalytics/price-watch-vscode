@@ -11,6 +11,14 @@ export interface ModelPricing {
   webSearch?: number
 }
 
+/** Nur OpenCode Go: Das Abo begrenzt in Dollarwerten, nicht in Token. */
+export interface ModelQuota {
+  includedUsdPerMonth?: number
+  requestsPer5Hours?: number
+  requestsPerWeek?: number
+  requestsPerMonth?: number
+}
+
 export interface ModelCapabilities {
   inputModalities: string[]
   outputModalities: string[]
@@ -50,6 +58,7 @@ export interface ModelOffer {
   pricing: ModelPricing
   capabilities: ModelCapabilities
   benchmarks?: BenchmarkScores
+  quota?: ModelQuota
   deprecatedAt?: string
 }
 

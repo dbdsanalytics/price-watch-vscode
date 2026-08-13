@@ -102,3 +102,27 @@ $5 for your first month, then $10/month
     expect(luna.name).toContain("272K")
   })
 })
+
+// Bei OpenCode Go entscheidet nicht der Token-Preis, sondern wie viele
+// Anfragen das Abo hergibt: Qwen3.8 Max erlaubt 810 im Monat, DeepSeek V4
+// Flash 158.150 — Faktor 195 bei nur 25-fachem Preis.
+describe("Go: Kontingent", () => {
+  test("liest Anfragen je Zeitraum und die enthaltene Monatsnutzung", async () => {
+    const offers = parseGoDocument(await Bun.file(`${import.meta.dir}/fixtures-go.mdx`).text()).offers
+    const flash = offers.find((offer) => offer.id === "deepseek-v4-flash")!
+    expect(flash.quota).toMatchObject({ requestsPerMonth: 158_150, requestsPerWeek: 79_050, requestsPer5Hours: 31_650, includedUsdPerMonth: 60 })
+    const max = offers.find((offer) => offer.id === "qwen3.8-max")!
+    expect(max.quota).toMatchObject({ requestsPerMonth: 810, includedUsdPerMonth: 15 })
+  })
+
+  test("verkraftet Tausendertrennzeichen", async () => {
+    const offers = parseGoDocument(await Bun.file(`${import.meta.dir}/fixtures-go.mdx`).text()).offers
+    // "2,150" darf nicht als 2 ankommen.
+    expect(offers.find((offer) => offer.id === "gpt-5.6-luna")!.quota?.requestsPerWeek).toBe(5_100)
+  })
+
+  test("Zen kennt kein Kontingent", () => {
+    const zen = parseZenDocument(`${endpoints}\n## Pricing\n| Model | Input | Output |\n|---|---|---|\n| DeepSeek V4 Flash | $0.14 | $0.28 |`)
+    expect(zen[0].quota).toBeUndefined()
+  })
+})
