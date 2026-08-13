@@ -53,6 +53,37 @@ async function fetchOpenRouterAccount(key) {
   return parseOpenRouterKeyStatus(await response.json());
 }
 
+// src/accounts/opencode.ts
+var WARN_PERCENT = 85;
+var windows = [
+  { key: "rolling", label: "5 Std" },
+  { key: "weekly", label: "Woche" },
+  { key: "monthly", label: "Monat" }
+];
+function parseOpenCodeGoUsage(body) {
+  const usage = body.usage;
+  const read = windows.map(({ key, label }) => {
+    const window2 = usage?.[key];
+    const percent = window2?.percent;
+    if (typeof percent !== "number" || !Number.isFinite(percent)) return null;
+    return { label, percent, limited: window2?.status === "rate-limited", resetsAt: typeof window2?.resetsAt === "string" ? window2.resetsAt : void 0 };
+  }).filter((item) => item !== null);
+  if (!read.length) throw new Error("OpenCode Go: Antwort enth\xE4lt keine Nutzungsdaten");
+  const binding = read.filter((item) => item.limited).sort((a, b) => b.percent - a.percent)[0] ?? read.slice().sort((a, b) => b.percent - a.percent)[0];
+  const state2 = read.some((item) => item.limited) ? "exhausted" : read.some((item) => item.percent >= WARN_PERCENT) ? "low" : "available";
+  return {
+    provider: "opencode-go",
+    state: state2,
+    resetAt: binding.resetsAt,
+    message: read.map((item) => `${item.label} ${item.percent} %`).join(" \xB7 ")
+  };
+}
+async function fetchOpenCodeGoAccount(key) {
+  const response = await fetch("https://opencode.ai/zen/go/v1/usage", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15e3) });
+  if (!response.ok) throw new Error(`OpenCode Go HTTP ${response.status}`);
+  return parseOpenCodeGoUsage(await response.json());
+}
+
 // src/accounts/openrouter-management.ts
 function parseOpenRouterManagement(credits, keys) {
   const now = Date.now();
@@ -209,10 +240,10 @@ function mergeHistory(local, incoming, now = Date.now()) {
 function carryForwardOffers(previous, fresh) {
   const known = new Map(previous.map((snapshot) => [snapshot.provider, snapshot]));
   return fresh.map((snapshot) => {
-    if (!snapshot.error || snapshot.offers.length) return snapshot;
+    if (snapshot.offers.length) return snapshot;
     const last = known.get(snapshot.provider);
     if (!last?.offers.length) return snapshot;
-    return { ...snapshot, offers: last.offers, checkedAt: last.checkedAt };
+    return { ...snapshot, offers: last.offers, checkedAt: last.checkedAt, stale: true };
   });
 }
 
@@ -246,7 +277,7 @@ function enrichProviderBenchmarks(snapshots, api) {
   const detailsByModel = /* @__PURE__ */ new Map();
   for (const item of api?.items ?? []) {
     const details = detailsByModel.get(item.modelId) ?? [];
-    details.push({ name: item.benchmark, score: item.score, costPerTaskUsd: item.costPerTaskUsd, sampleCount: item.sampleCount, lastRunAt: item.lastRunAt });
+    details.push({ name: item.benchmark, score: item.score, elo: item.elo, costPerTaskUsd: item.costPerTaskUsd, sampleCount: item.sampleCount, lastRunAt: item.lastRunAt });
     detailsByModel.set(item.modelId, details);
   }
   const withApi = snapshots.map((snapshot) => snapshot.provider !== "openrouter" ? snapshot : { ...snapshot, offers: snapshot.offers.map((offer) => {
@@ -335,8 +366,27 @@ function benchmarkCell(offer) {
   if (!scores) return `<div class="benchmark benchmark-missing"><strong>Keine Daten</strong><small>Noch nicht belastbar bewertet</small></div>`;
   const values = [["Intelligenz", scores.intelligence], ["Coding", scores.coding], ["Agentic", scores.agentic]].filter((item) => item[1] !== void 0);
   const provenance = scores.match === "base-model" ? "Identisches Basismodell" : scores.match === "local" ? "Lokaler Praxistest" : "\xD6ffentlich bewertet";
-  const detailLabel = { gpqa_diamond: "GPQA Diamond", tau_bench_verified_airline: "\u03C4\xB2-Bench Airline", search_browsecomp: "BrowseComp", search_dsqa: "DeepSearchQA", search_hle: "Search HLE", search_widesearch: "WideSearch" };
-  const details = (scores.details ?? []).map((detail) => `<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>${detail.sampleCount !== void 0 ? `<small>${detail.sampleCount} Aufgaben</small>` : ""}${detail.costPerTaskUsd !== void 0 ? `<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>` : ""}</article>`).join("");
+  const detailLabel = {
+    gpqa_diamond: "GPQA Diamond",
+    tau_bench_verified_airline: "\u03C4\xB2-Bench Airline",
+    search_browsecomp: "BrowseComp",
+    search_dsqa: "DeepSearchQA",
+    search_hle: "Search HLE",
+    search_widesearch: "WideSearch",
+    arena_codecategories: "Arena \xB7 Code",
+    arena_website: "Arena \xB7 Website",
+    arena_uicomponent: "Arena \xB7 UI-Komponenten",
+    arena_dataviz: "Arena \xB7 Datenvisualisierung",
+    arena_svg: "Arena \xB7 SVG",
+    arena_gamedev: "Arena \xB7 Spiele",
+    arena_3d: "Arena \xB7 3D",
+    arena_asciiart: "Arena \xB7 ASCII-Art",
+    arena_graphicdesign: "Arena \xB7 Grafikdesign",
+    arena_logo: "Arena \xB7 Logo",
+    arena_image: "Arena \xB7 Bild",
+    arena_imageediting: "Arena \xB7 Bildbearbeitung"
+  };
+  const details = (scores.details ?? []).map((detail) => `<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>${detail.elo !== void 0 ? `<small>ELO ${detail.elo}</small>` : ""}${detail.sampleCount !== void 0 ? `<small>${detail.sampleCount} ${detail.elo !== void 0 ? "Duelle" : "Aufgaben"}</small>` : ""}${detail.costPerTaskUsd !== void 0 ? `<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>` : ""}</article>`).join("");
   return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${values.map(([label, value]) => `<span><b>${label}</b> ${value}</span>`).join("")}</div>${details ? `<details class="benchmark-details"><summary>${scores.details?.length} Einzelbenchmarks</summary>${details}</details>` : ""}<small>${provenance}</small></div>`;
 }
 function renderRanks(offers) {
@@ -373,12 +423,13 @@ function renderAgentGroups(items) {
 }
 function accountValue(account) {
   if (account.remainingUsd !== void 0) return `${money(account.remainingUsd)} verf\xFCgbar`;
+  if (account.message) return account.message;
   if (account.state === "available") return "Verbunden \xB7 kein festes Schl\xFCssellimit";
-  return account.message ?? "Verbrauch nicht automatisch abrufbar";
+  return "Verbrauch nicht automatisch abrufbar";
 }
 function renderAccountSummary(account) {
   const usage = [["Heute", account.dailyUsd], ["Woche", account.weeklyUsd], ["Monat", account.monthlyUsd]].filter((item) => item[1] !== void 0).map(([period, value]) => `${period} ${money(value)}`).join(" \xB7 ");
-  return `<div class="account-summary"><div><strong>${esc(account.provider)}</strong>${account.label ? `<small>${esc(account.label)}</small>` : ""}${usage ? `<small class="account-usage">${esc(usage)}</small>` : ""}</div><span class="status status-${account.state}">${esc(accountValue(account))}</span></div>`;
+  return `<div class="account-summary"><div><strong>${esc(account.provider)}</strong>${account.label ? `<small>${esc(account.label)}</small>` : ""}${usage ? `<small class="account-usage">${esc(usage)}</small>` : ""}${account.resetAt ? `<small class="account-usage">Reset ${esc(new Date(account.resetAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }))}</small>` : ""}</div><span class="status status-${account.state}">${esc(accountValue(account))}</span></div>`;
 }
 function metric(value, label, tone = "") {
   return `<div class="account-metric ${tone}"><strong>${value}</strong><small>${label}</small></div>`;
@@ -402,8 +453,9 @@ function panelHtml(state2) {
   const assessments = state2.agents.map((agent) => assessAgent(agent, offers)), preview = assessments.slice(0, 4);
   const modelRows = offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-provider="${offer.provider}" data-price="${priceClass(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small></td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${offer.pricing.unknown ? "Preis unbekannt" : money(offer.pricing.input)}</span></td><td><span class="price price-${priceClass(offer)}">${offer.pricing.unknown ? "Preis unbekannt" : money(offer.pricing.output)}</span></td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("");
   const stamp = (at) => new Date(at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+  const refreshError = state2.refreshError ? `<div class="notice error">Aktualisierung fehlgeschlagen: ${esc(state2.refreshError)}</div>` : "";
   const providerErrors = state2.snapshots.filter((snapshot) => snapshot.error).map((snapshot) => `<div class="notice error">${esc(snapshot.provider)}: ${esc(snapshot.error?.message)}${snapshot.offers.length ? ` \xB7 zeigt weiterhin die Preise vom ${esc(stamp(snapshot.checkedAt))}` : ""}</div>`).join("");
-  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">\xDCbersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header>${providerErrors}<main>
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">\xDCbersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header>${refreshError}${providerErrors}<main>
   <section class="view" id="overview"><div class="metrics"><span><strong>${offers.length}</strong>Modelle</span><span><strong>${free}</strong>kostenlos</span><span><strong>${state2.history.length}</strong>\xC4nderungen</span><span><strong>${state2.agents.length}</strong>Agenten</span></div><div class="insight"><strong>\u2726 KI-Fazit</strong><span>${esc(state2.ai?.text ?? "Preis- und Agentendaten werden lokal ausgewertet.")}</span></div><div class="dashboard"><section class="card rankings"><h2>Beste Modelle f\xFCr deinen Zweck</h2>${renderRanks(offers)}</section><section class="card agents-card"><div class="card-head"><h2>Deine Agenten</h2><button data-view="agents">Alle ${assessments.length}</button></div>${preview.length ? preview.map((item) => renderAgentRow(item, true)).join("") : `<p class="empty">Keine Agenten erkannt</p>`}${assessments.length > 4 ? `<button class="more" data-view="agents">Mehr Agenten anzeigen</button>` : ""}</section><section class="card accounts-card"><div class="card-head"><h2>Konten &amp; Limits</h2><button data-view="accounts">Details</button></div>${state2.accounts.length ? state2.accounts.map(renderAccountSummary).join("") : `<p class="empty">Noch kein Konto verbunden</p>`}</section></div></section>
   <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${offers.length} Angebote von OpenRouter, Zen und Go</p></div></div><div class="filters"><input id="search" placeholder="Modelle durchsuchen"><select id="provider"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose"><option value="">Alle F\xE4higkeiten</option>${Object.entries(labels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="table-wrap"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th><th>Benchmark</th></tr></thead><tbody>${modelRows}</tbody></table></div></section>
   <section class="view" id="agents" hidden><div class="page-head"><div><h1>Deine Agenten</h1><p>Nach Handlungsbedarf und Qualit\xE4t geordnet</p></div></div><div class="agent-groups">${renderAgentGroups(assessments)}</div></section>
@@ -471,10 +523,11 @@ function idsFromDocument(mdx) {
   }
   return ids;
 }
+var isPriceHeader = (row) => /^Model/i.test(row[0] ?? "") && row.some((cell) => /^Input$/i.test(cell)) && row.some((cell) => /^Output$/i.test(cell));
 function parsePricing(mdx, provider) {
   const ids = idsFromDocument(mdx);
   const offers = [];
-  let pricing = false;
+  let pricing = false, inPriceTable = false;
   for (const line of mdx.split("\n")) {
     if (/^## (Pricing|Usage limits)/i.test(line)) {
       pricing = true;
@@ -483,15 +536,25 @@ function parsePricing(mdx, provider) {
     if (pricing && /^## /.test(line)) break;
     if (!pricing || !line.startsWith("|")) continue;
     const row = cells(line);
-    if (!row[0] || /^(Model|-+)/i.test(row[0])) continue;
+    if (/^Model/i.test(row[0] ?? "")) {
+      inPriceTable = isPriceHeader(row);
+      continue;
+    }
+    if (!inPriceTable) continue;
+    if (!row[0] || /^-+$/.test(row[0])) continue;
     const base = norm(row[0]);
     const id = ids.get(base) ?? ids.get(base.replace(/-tokens$/, ""));
     if (!id) continue;
+    if (offers.some((offer) => offer.id === id)) continue;
     offers.push({ provider, id, name: row[0], pricing: { input: toUsd(row[1]), output: toUsd(row[2]), cacheRead: toUsd(row[3]), cacheWrite: toUsd(row[4]) }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding", "tools"] } });
   }
   return offers;
 }
 var parseZenDocument = (mdx) => parsePricing(mdx, "opencode-zen");
+function requireOffers(provider, offers) {
+  if (!offers.length) throw new Error(`${provider}: keine Preise im Dokument gefunden \u2014 Struktur ge\xE4ndert?`);
+  return offers;
+}
 function parseGoDocument(mdx) {
   const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month[^$]{0,40}\$(\d+(?:\.\d+)?)\/month/i);
   return { subscription: { firstMonthUsd: Number(match?.[1] ?? 0), monthlyUsd: Number(match?.[2] ?? 0) }, offers: parsePricing(mdx, "opencode-go") };
@@ -552,22 +615,38 @@ var finite = (value) => typeof value === "number" && Number.isFinite(value);
 function parseOpenRouterBenchmarks(body, fetchedAt = Date.now()) {
   const items = [];
   for (const row of body.data ?? []) {
-    if (typeof row.model_permaslug !== "string" || typeof row.benchmark_type !== "string" || !finite(row.accuracy)) continue;
-    items.push({
+    if (typeof row.model_permaslug !== "string") continue;
+    const common = {
       modelId: row.model_permaslug,
       modelName: typeof row.display_name === "string" ? row.display_name : void 0,
-      benchmark: row.benchmark_type,
-      score: row.accuracy * 100,
-      costPerTaskUsd: finite(row.avg_cost_per_task) ? row.avg_cost_per_task : void 0,
-      sampleCount: finite(row.total_tasks) ? row.total_tasks : void 0,
       lastRunAt: typeof row.last_run_timestamp === "string" ? row.last_run_timestamp : void 0,
       source: typeof row.source === "string" ? row.source : "openrouter"
+    };
+    if (typeof row.category === "string" && finite(row.win_rate)) {
+      const stats = row.tournament_stats;
+      items.push({
+        ...common,
+        benchmark: `arena_${row.category}`,
+        score: row.win_rate,
+        elo: finite(row.elo) ? row.elo : void 0,
+        sampleCount: finite(stats?.total) ? stats.total : void 0
+      });
+      continue;
+    }
+    const share = finite(row.accuracy) ? row.accuracy : finite(row.primary_score) ? row.primary_score : void 0;
+    if (typeof row.benchmark_type !== "string" || share === void 0) continue;
+    items.push({
+      ...common,
+      benchmark: row.benchmark_type,
+      score: share * 100,
+      costPerTaskUsd: finite(row.avg_cost_per_task) ? row.avg_cost_per_task : void 0,
+      sampleCount: finite(row.total_tasks) ? row.total_tasks : void 0
     });
   }
   return { fetchedAt, asOf: typeof body.meta?.as_of === "string" ? body.meta.as_of : void 0, citation: typeof body.meta?.citation === "string" ? body.meta.citation : void 0, items };
 }
 async function fetchOpenRouterBenchmarks(key) {
-  const response = await fetch("https://openrouter.ai/api/v1/benchmarks?source=openrouter", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2e4) });
+  const response = await fetch("https://openrouter.ai/api/v1/benchmarks", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2e4) });
   if (!response.ok) throw new Error(`OpenRouter Benchmarks HTTP ${response.status}`);
   return parseOpenRouterBenchmarks(await response.json());
 }
@@ -616,53 +695,66 @@ function updateStatus() {
 async function refresh(context, manual) {
   if (running) return running;
   running = (async () => {
-    const previous = state.snapshots.flatMap((snapshot) => snapshot.offers);
-    const openRouterKey = await context.secrets.get(secretKey("openrouter"));
-    const benchmarkSnapshot = openRouterKey ? await loadBenchmarks(context.globalState, openRouterKey, manual, fetchOpenRouterBenchmarks) : context.globalState.get(BENCHMARK_CACHE_KEY) ?? null;
-    const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
-      openrouter: fetchOpenRouterCatalog,
-      "opencode-zen": async () => parseZenDocument(await fetchOpenCodeDocument(ZEN_URL)),
-      "opencode-go": async () => parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers
-    }), benchmarkSnapshot));
-    const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers);
-    const changes = diffOffers(previous, successful);
-    state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now() };
-    const settings = vscode.workspace.getConfiguration("priceWatch");
-    const aiKey = openRouterKey;
-    if (aiKey && shouldRunAi({ lastAt: context.globalState.get(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
-      try {
-        state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get("aiModel", "openrouter/free"));
-      } catch (error) {
-        state.ai = aiFailure(error);
+    try {
+      const previous = state.snapshots.flatMap((snapshot) => snapshot.offers);
+      const openRouterKey = await context.secrets.get(secretKey("openrouter"));
+      const benchmarkSnapshot = openRouterKey ? await loadBenchmarks(context.globalState, openRouterKey, manual, fetchOpenRouterBenchmarks) : context.globalState.get(BENCHMARK_CACHE_KEY) ?? null;
+      const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
+        openrouter: fetchOpenRouterCatalog,
+        "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
+        "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers)
+      }), benchmarkSnapshot));
+      const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers);
+      const changes = diffOffers(previous, successful);
+      state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now(), refreshError: null };
+      const settings = vscode.workspace.getConfiguration("priceWatch");
+      const aiKey = openRouterKey;
+      if (aiKey && shouldRunAi({ lastAt: context.globalState.get(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
+        try {
+          state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get("aiModel", "openrouter/free"));
+        } catch (error) {
+          state.ai = aiFailure(error);
+        }
+        await context.globalState.update(AI_LAST_RUN_KEY, Date.now());
       }
-      await context.globalState.update(AI_LAST_RUN_KEY, Date.now());
+      await context.globalState.update(HISTORY_KEY, state.history);
+      await context.globalState.update(SNAPSHOT_KEY, snapshots);
+      if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch \xF6ffnen?`, "\xD6ffnen").then((choice) => {
+        if (choice) void vscode.commands.executeCommand("priceWatch.open");
+      });
+      updateStatus();
+      refreshPanel();
+    } catch (error) {
+      state = { ...state, refreshError: error instanceof Error ? error.message : String(error) };
+      updateStatus();
+      refreshPanel();
     }
-    await context.globalState.update(HISTORY_KEY, state.history);
-    await context.globalState.update(SNAPSHOT_KEY, snapshots);
-    if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch \xF6ffnen?`, "\xD6ffnen").then((choice) => {
-      if (choice) void vscode.commands.executeCommand("priceWatch.open");
-    });
-    updateStatus();
-    refreshPanel();
   })().finally(() => {
     running = void 0;
   });
   return running;
+}
+var VERIFIABLE = {
+  openrouter: fetchOpenRouterAccount,
+  "opencode-go": fetchOpenCodeGoAccount
+};
+async function verifyAccount(provider, token) {
+  const check = VERIFIABLE[provider];
+  return check ? await check(token) : unavailableAccount(provider, "Verbunden \xB7 nicht \xFCberpr\xFCfbar, kein Usage-Endpunkt");
 }
 async function connectAccount(context) {
   const provider = await vscode.window.showQuickPick(["openrouter", "opencode-zen", "opencode-go", "claude-code"], { title: "Konto ausdr\xFCcklich verbinden" });
   if (!provider) return;
   const token = await vscode.window.showInputBox({ title: `${provider} Zugang`, password: true, prompt: "Wird nur im VS Code Secret Store dieses Ger\xE4ts gespeichert" });
   if (!token) return;
-  await context.secrets.store(secretKey(provider), token.trim());
   let account;
   try {
-    account = provider === "openrouter" ? await fetchOpenRouterAccount(token.trim()) : unavailableAccount(provider, "Verbunden \xB7 pers\xF6nliche Usage-API nicht verf\xFCgbar");
+    account = await verifyAccount(provider, token.trim());
   } catch (error) {
-    await context.secrets.delete(secretKey(provider));
     void vscode.window.showErrorMessage(`Verbindung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
+  await context.secrets.store(secretKey(provider), token.trim());
   state.accounts = [...state.accounts.filter((item) => item.provider !== provider), account];
   refreshPanel();
 }
@@ -697,7 +789,7 @@ async function refreshConnectedAccounts(context) {
     const token = await context.secrets.get(secretKey(provider));
     if (!token) continue;
     try {
-      accounts.push(provider === "openrouter" ? await fetchOpenRouterAccount(token) : unavailableAccount(provider, "Verbunden \xB7 pers\xF6nliche Usage-API nicht verf\xFCgbar"));
+      accounts.push(await verifyAccount(provider, token));
     } catch (error) {
       accounts.push(unavailableAccount(provider, error instanceof Error ? error.message : String(error)));
     }

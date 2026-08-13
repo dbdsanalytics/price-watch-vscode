@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3 – 2026-08-13
+
+- Zeigt für OpenCode Go keine erfundenen Preise mehr: Der Abschnitt „Usage limits" enthält zwei Tabellen, und die Anfragen je Zeitraum wurden als Dollarbeträge gelesen — GLM-5.2 erschien mit $880 statt $1.40, Grok 4.5 mit $120 statt $2.
+- Führt gestufte Preise nur noch einmal auf und benennt die Stufe im Modellnamen, statt dasselbe Modell mehrfach mit abweichenden Werten zu listen.
+- Behandelt ein Preisdokument ohne erkennbare Tabelle als Fehler statt als leeres Ergebnis; die zuletzt bekannten Preise bleiben sichtbar samt Zeitstempel.
+- Macht Fehler in der Verarbeitung sichtbar, statt Statusleiste und Panel stumm auf dem alten Stand zu lassen.
+- Liest alle drei Benchmark-Quellen statt einer: 1254 statt 233 Messwerte, darunter die kategoriegenauen Arena-Wertungen für Website, UI-Komponenten, Datenvisualisierung, Code und SVG.
+- Zeigt das OpenCode-Go-Kontingent mit Fünf-Stunden-, Wochen- und Monatsfenster samt Reset-Zeitpunkt.
+- Prüft einen Zugang, bevor er im Secret Store abgelegt wird, und weist Anbieter ohne Usage-Endpunkt als nicht überprüfbar aus, statt sie als verbunden zu melden.
+
 ## 0.2.2 – 2026-08-12
 
 - Behält bei einem Anbieterausfall die zuletzt bekannten Preise samt Zeitstempel, statt Modelle und Vergleichsbasis zu verlieren.
