@@ -1,7 +1,14 @@
+import type { AttentionItem } from "../../domain/attention"
 import type { ModelOffer } from "../../domain/model"
 import { rankOffers, type Purpose } from "../../domain/ranking"
 import { esc, money } from "../format"
 import { labels, purposeIcon } from "./models"
+
+/** Leer heisst leer: kein „alles in Ordnung"-Streifen, der nur Platz kostet. */
+export function renderAttention(items: AttentionItem[] = []): string {
+  if (!items.length) return ""
+  return items.map((item) => `<button class="attention-item ${item.severity}" data-view="${item.view}">${esc(item.text)}</button>`).join("")
+}
 
 export function renderRanks(offers: ModelOffer[]): string {
   return (Object.entries(labels) as Array<[Purpose,string]>).map(([purpose,label],index) => {

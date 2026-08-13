@@ -50,10 +50,13 @@ test("zeigt Kontingentangaben ohne Dollarwert statt der generischen Zeile", () =
 // Bisher konnte die Verarbeitung nach dem Abruf werfen, ohne dass irgendetwas
 // sichtbar wurde: beide automatischen Aufrufwege nutzen void refresh(...), die
 // Rejection blieb unbehandelt und das Panel zeigte weiter den alten Stand.
+// Seit Etappe 2 fuehrt der Weg ueber collectAttention: die Domain-Funktion
+// erzeugt den Eintrag (siehe attention.test.ts), das Panel stellt ihn dar.
 test("meldet einen Fehler der Verarbeitung sichtbar im Panel", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, refreshError: "Speichern fehlgeschlagen" })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, refreshError: "Speichern fehlgeschlagen",
+    attention: [{ kind: "data", severity: "warn", text: "Aktualisierung fehlgeschlagen: Speichern fehlgeschlagen", view: "models" }] })
   expect(html).toContain("Speichern fehlgeschlagen")
-  expect(html).toContain("notice error")
+  expect(html).toContain("attention-item warn")
 })
 
 test("zeigt keine Fehlerzeile, wenn die Aktualisierung durchlief", () => {
@@ -124,8 +127,30 @@ test("benennt ein fehlendes Anfragenkontingent", () => {
   expect(html).toContain("Anfragen nicht in der Quelle")
 })
 
-test("zeigt eine Warnung als Hinweis, nicht als Fehler", () => {
-  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered], warning: "Nur 42 statt zuletzt 61 Modelle gelesen" }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+// Warnung und Hinweis muessen sich optisch unterscheiden: das eine verlangt
+// eine Reaktion, das andere ist ein Angebot.
+test("unterscheidet Warnung und Hinweis in der Kopfzeile", () => {
+  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0,
+    attention: [{ kind: "data", severity: "warn", text: "Nur 42 statt zuletzt 61 Modelle gelesen", view: "models" },
+      { kind: "price", severity: "info", text: "3 deutliche Preisänderungen", view: "history" }] })
   expect(html).toContain("Nur 42 statt zuletzt 61 Modelle gelesen")
-  expect(html).toContain('class="notice warn"')
+  expect(html).toContain("attention-item warn")
+  expect(html).toContain("attention-item info")
+})
+
+test("zeigt Handlungsbedarf als anklickbare Kopfzeile", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0,
+    attention: [{ kind: "account", severity: "warn", text: "openrouter: Guthaben wird knapp", view: "accounts" }] })
+  expect(html).toContain("openrouter: Guthaben wird knapp")
+  expect(html).toContain('class="attention-item warn"')
+  expect(html).toContain('data-view="accounts"')
+})
+
+// Zwei Orte fuer dieselbe Meldung waeren ausgerechnet in der Ansicht
+// widersinnig, die Handlungsbedarf buendeln soll.
+test("zeigt Anbieterfehler nicht mehr als eigenen Streifen", () => {
+  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", offers: [], checkedAt: 1, stale: true, error: { kind: "network", message: "offline" } }],
+    history: [], agents: [], accounts: [], ai: null, updatedAt: 0, refreshError: "kaputt" })
+  expect(html).not.toContain('class="notice error"')
+  expect(html).not.toContain('class="notice warn"')
 })

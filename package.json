@@ -74,6 +74,12 @@
           "type": "string",
           "default": "openrouter/free",
           "description": "Kostenloses KI-Modell für die Preis-Analyse (OpenRouter-Modell-ID)."
+        },
+        "priceWatch.priceJumpPercent": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "description": "Ab welcher Preisänderung in Prozent ein Hinweis in der Übersicht erscheint."
         }
       }
     }

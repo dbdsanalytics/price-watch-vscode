@@ -8,7 +8,7 @@ import { BENCHMARK_CSS, CSS } from "./styles"
 import { renderAgentGroups, renderAgentRow } from "./views/agents"
 import { renderAccountSummary, renderOpenRouterSection, renderProviderSection } from "./views/accounts"
 import { modelFilters, modelRows } from "./views/models"
-import { renderRanks } from "./views/overview"
+import { renderAttention, renderRanks } from "./views/overview"
 
 interface PreparedView { state: DashboardState; offers: ModelOffer[]; free: number; assessments: AgentAssessment[]; preview: AgentAssessment[] }
 
@@ -34,8 +34,7 @@ export function fragments(state: DashboardState): Record<FragmentId, string> {
   const view = prepare(state)
   return {
     metrics: metricsInner(view),
-    // In Etappe 1 dauerhaft leer; Etappe 2 fuellt die Kopfzeile Handlungsbedarf.
-    attention: "",
+    attention: renderAttention(state.attention),
     insight: insightInner(view),
     "overview-ranks": ranksInner(view),
     "overview-agents": overviewAgentsInner(view),
@@ -47,15 +46,12 @@ export function fragments(state: DashboardState): Record<FragmentId, string> {
 }
 
 export function panelHtml(state: DashboardState): string {
+  // Fehler und Warnungen stehen jetzt in der Kopfzeile Handlungsbedarf statt in
+  // eigenen Streifen: zwei Orte fuer dieselbe Meldung waeren ausgerechnet dort
+  // widersinnig, wo alles gebuendelt werden soll.
   const nonce = randomBytes(16).toString("base64"), view = prepare(state)
-  // Ein Fehler in der Verarbeitung betrifft alle Anbieter und steht deshalb vor
-  // den einzelnen Anbietermeldungen.
-  const refreshError = state.refreshError ? `<div class="notice error">Aktualisierung fehlgeschlagen: ${esc(state.refreshError)}</div>` : ""
-  const providerErrors = state.snapshots.filter((snapshot)=>snapshot.error).map((snapshot)=>`<div class="notice error">${esc(snapshot.provider)}: ${esc(snapshot.error?.message)}${snapshot.offers.length ? ` · zeigt weiterhin die Preise vom ${esc(stamp(snapshot.checkedAt))}` : ""}</div>`).join("")
-  // Verdaechtige Daten, kein Ausfall: eigene Farbe, nicht die Fehlerdarstellung.
-  const providerWarnings = state.snapshots.filter((snapshot)=>snapshot.warning).map((snapshot)=>`<div class="notice warn">${esc(snapshot.provider)}: ${esc(snapshot.warning)}</div>`).join("")
-  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">Übersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header>${refreshError}${providerErrors}${providerWarnings}<main>
-  <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention"></div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section></div></section>
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">Übersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header><main>
+  <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention">${renderAttention(state.attention)}</div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section></div></section>
   <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${view.offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div class="table-wrap"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>Fähigkeiten</th><th>Benchmark</th></tr></thead><tbody data-fragment="models">${modelRows(view.offers)}</tbody></table></div></section>
   <section class="view" id="agents" hidden><div class="page-head"><div><h1>Deine Agenten</h1><p>Nach Handlungsbedarf und Qualität geordnet</p></div></div><div class="agent-groups" data-fragment="agents">${renderAgentGroups(view.assessments)}</div></section>
   <section class="view" id="accounts" hidden><div class="page-head"><div><h1>Konten &amp; Limits</h1><p>Secrets bleiben ausschließlich im lokalen VS Code Secret Store.</p></div></div><div class="provider-sections" data-fragment="accounts">${accountsInner(view)}</div></section></main><script nonce="${nonce}">${SCRIPT}</script></body></html>`
