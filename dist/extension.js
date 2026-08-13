@@ -116,6 +116,20 @@ async function fetchOpenRouterManagement(key) {
   return parseOpenRouterManagement(credits, keys);
 }
 
+// src/agents/assessment.ts
+function assessAgent(agent, offers) {
+  if (/^(lmstudio|ollama|local)[/:]/i.test(agent.model)) return { agent, status: "local", reason: "Lokales Modell \xB7 keine \xF6ffentlichen Preis- oder Benchmarkdaten" };
+  const current = offers.find((offer) => agent.model.endsWith(offer.id));
+  if (!current) return { agent, status: "unknown", reason: agent.model ? "Modell nicht im \xF6ffentlichen Katalog gefunden" : "Keine Modellzuordnung gefunden" };
+  if (current.deprecatedAt) return { agent, status: "deprecated", reason: `Abgek\xFCndigt: ${current.deprecatedAt}` };
+  const codingAgent = /code|review|build|debug|develop/i.test(`${agent.name} ${agent.description}`);
+  if (codingAgent && !current.capabilities.purposes.includes("coding")) return { agent, status: "unsuitable", reason: "Keine belastbaren Coding-F\xE4higkeiten ausgewiesen" };
+  const currentCost = current.pricing.input + current.pricing.output;
+  const currentScore = current.benchmarks?.coding;
+  const alternative = currentScore === void 0 ? void 0 : offers.filter((offer) => offer.id !== current.id && (!codingAgent || offer.capabilities.purposes.includes("coding"))).filter((offer) => offer.benchmarks?.coding !== void 0 && offer.benchmarks.coding >= currentScore * 0.9).filter((offer) => offer.pricing.input + offer.pricing.output < currentCost * 0.7).sort((a, b) => (b.benchmarks?.coding ?? 0) - (a.benchmarks?.coding ?? 0))[0];
+  return alternative ? { agent, status: "alternative-available", reason: "Mindestens 30 % g\xFCnstigere Alternative verf\xFCgbar", alternative } : { agent, status: "suitable", reason: "F\xE4higkeiten und Preis weiterhin passend" };
+}
+
 // src/config.ts
 function stripJsoncComments(src) {
   let out = "";
@@ -191,6 +205,52 @@ function mergeAgents(...scopes) {
 }
 function metadataPayload(agent) {
   return { name: agent.name, description: agent.description, model: agent.model, tools: agent.tools };
+}
+
+// src/domain/attention.ts
+var JUMP_WINDOW_DAYS = 7;
+function summarize(names, one, many) {
+  if (!names.length) return void 0;
+  return names.length === 1 ? one(names[0]) : many(names.length);
+}
+function collectAttention(input) {
+  const now = input.now ?? Date.now();
+  const items = [];
+  const add = (kind, severity, view, text) => {
+    if (text) items.push({ kind, severity, view, text });
+  };
+  if (input.refreshError) add("data", "warn", "models", `Aktualisierung fehlgeschlagen: ${input.refreshError}`);
+  for (const snapshot of input.snapshots) {
+    if (snapshot.error) add("data", "warn", "models", `${snapshot.provider}: ${snapshot.error.message}`);
+    else if (snapshot.warning) add("data", "warn", "models", `${snapshot.provider}: ${snapshot.warning}`);
+  }
+  for (const state2 of ["exhausted", "low"]) {
+    const providers = input.accounts.filter((account) => account.state === state2).map((account) => account.provider);
+    add("account", "warn", "accounts", summarize(
+      providers,
+      (name) => state2 === "exhausted" ? `${name}: Guthaben ersch\xF6pft` : `${name}: Guthaben wird knapp`,
+      (count2) => state2 === "exhausted" ? `${count2} Konten ersch\xF6pft` : `${count2} Konten werden knapp`
+    ));
+  }
+  const named = (status) => input.assessments.filter((item) => item.status === status).map((item) => item.agent.name);
+  add("agent", "warn", "agents", summarize(
+    [...named("deprecated"), ...named("unsuitable")],
+    (name) => `Agent \u201E${name}" braucht ein anderes Modell`,
+    (count2) => `${count2} Agenten brauchen ein anderes Modell`
+  ));
+  const cutoff = now - JUMP_WINDOW_DAYS * 864e5;
+  const jumps = input.history.filter((change) => change.at >= cutoff && change.percent !== null && Math.abs(change.percent) >= input.jumpPercent);
+  add("price", "info", "history", summarize(
+    jumps.map((change) => change.modelId),
+    (name) => `Deutliche Preis\xE4nderung bei ${name}`,
+    (count2) => `${count2} deutliche Preis\xE4nderungen`
+  ));
+  add("agent", "info", "agents", summarize(
+    named("alternative-available"),
+    (name) => `F\xFCr \u201E${name}" gibt es eine g\xFCnstigere Alternative`,
+    (count2) => `${count2} Agenten haben eine g\xFCnstigere Alternative`
+  ));
+  return items;
 }
 
 // src/domain/model.ts
@@ -329,20 +389,6 @@ async function loadBenchmarks(storage, key, forceRefresh, loader, now = Date.now
 // src/panel/index.ts
 var import_crypto = require("crypto");
 
-// src/agents/assessment.ts
-function assessAgent(agent, offers) {
-  if (/^(lmstudio|ollama|local)[/:]/i.test(agent.model)) return { agent, status: "local", reason: "Lokales Modell \xB7 keine \xF6ffentlichen Preis- oder Benchmarkdaten" };
-  const current = offers.find((offer) => agent.model.endsWith(offer.id));
-  if (!current) return { agent, status: "unknown", reason: agent.model ? "Modell nicht im \xF6ffentlichen Katalog gefunden" : "Keine Modellzuordnung gefunden" };
-  if (current.deprecatedAt) return { agent, status: "deprecated", reason: `Abgek\xFCndigt: ${current.deprecatedAt}` };
-  const codingAgent = /code|review|build|debug|develop/i.test(`${agent.name} ${agent.description}`);
-  if (codingAgent && !current.capabilities.purposes.includes("coding")) return { agent, status: "unsuitable", reason: "Keine belastbaren Coding-F\xE4higkeiten ausgewiesen" };
-  const currentCost = current.pricing.input + current.pricing.output;
-  const currentScore = current.benchmarks?.coding;
-  const alternative = currentScore === void 0 ? void 0 : offers.filter((offer) => offer.id !== current.id && (!codingAgent || offer.capabilities.purposes.includes("coding"))).filter((offer) => offer.benchmarks?.coding !== void 0 && offer.benchmarks.coding >= currentScore * 0.9).filter((offer) => offer.pricing.input + offer.pricing.output < currentCost * 0.7).sort((a, b) => (b.benchmarks?.coding ?? 0) - (a.benchmarks?.coding ?? 0))[0];
-  return alternative ? { agent, status: "alternative-available", reason: "Mindestens 30 % g\xFCnstigere Alternative verf\xFCgbar", alternative } : { agent, status: "suitable", reason: "F\xE4higkeiten und Preis weiterhin passend" };
-}
-
 // src/panel/format.ts
 var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 var count = (value) => new Intl.NumberFormat("de-DE").format(value);
@@ -380,6 +426,16 @@ const applyFilter = () => {
 }
 ;['search', 'provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener(id === 'search' ? 'input' : 'change', () => { applyFilter(); save() }))
 
+const applyHistoryFilter = () => {
+  const q = document.getElementById('history-search').value.toLowerCase()
+  const p = document.getElementById('history-provider').value
+  const cutoff = Date.now() - Number(document.getElementById('history-range').value) * 86400000
+  document.querySelectorAll('[data-change]').forEach((row) => {
+    row.hidden = !(row.dataset.change.includes(q) && (!p || row.dataset.provider === p) && Number(row.dataset.at) >= cutoff)
+  })
+}
+;['history-search', 'history-provider', 'history-range'].forEach((id) => document.getElementById(id).addEventListener(id === 'history-search' ? 'input' : 'change', applyHistoryFilter))
+
 // Ein Tausch verwirft den Inhalt samt aufgeklappten Bereichen und der
 // Scrollposition der Tabelle. Beides wird um den Tausch herum gerettet.
 const replaceFragment = (id, html) => {
@@ -405,6 +461,8 @@ window.addEventListener('message', (event) => {
     replaceFragment(id, html)
   }
   applyFilter()
+  // Ein getauschtes Verlaufsfragment zeigte sonst wieder alle Zeilen.
+  applyHistoryFilter()
 })
 
 const restore = () => {
@@ -426,11 +484,11 @@ vscode.postMessage({ type: 'ready' })
 `;
 
 // src/panel/styles.ts
-var BENCHMARK_CSS = `.quota{color:var(--blue)}.benchmark{min-width:190px}.benchmark>div{display:flex;flex-wrap:wrap;gap:3px}.benchmark>div>span{padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--violet) 12%,transparent);font-size:.78em;white-space:nowrap}.benchmark>small{display:block;margin-top:3px;color:var(--muted)}.benchmark-base-model>small{color:var(--cyan)}.benchmark-local>small{color:var(--yellow)}.benchmark-missing strong{color:var(--muted)}.benchmark-details{margin-top:4px}.benchmark-details summary{color:var(--cyan);cursor:pointer;font-size:.82em}.benchmark-details article{display:grid;grid-template-columns:1fr auto;gap:0 8px;padding:3px 0;border-top:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.benchmark-details article>small{grid-column:1/-1;color:var(--muted);font-size:.75em}.notice.warn{border-left-color:var(--yellow);background:color-mix(in srgb,var(--yellow) 12%,transparent)}.tier-details{margin-top:4px}.tier-details summary{color:var(--cyan);cursor:pointer;font-size:.82em}.tier-details article{padding:2px 0;color:var(--muted);font-size:.8em;white-space:nowrap}`;
+var BENCHMARK_CSS = `.quota{color:var(--blue)}.benchmark{min-width:190px}.benchmark>div{display:flex;flex-wrap:wrap;gap:3px}.benchmark>div>span{padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--violet) 12%,transparent);font-size:.78em;white-space:nowrap}.benchmark>small{display:block;margin-top:3px;color:var(--muted)}.benchmark-base-model>small{color:var(--cyan)}.benchmark-local>small{color:var(--yellow)}.benchmark-missing strong{color:var(--muted)}.benchmark-details{margin-top:4px}.benchmark-details summary{color:var(--cyan);cursor:pointer;font-size:.82em}.benchmark-details article{display:grid;grid-template-columns:1fr auto;gap:0 8px;padding:3px 0;border-top:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.benchmark-details article>small{grid-column:1/-1;color:var(--muted);font-size:.75em}.notice.warn{border-left-color:var(--yellow);background:color-mix(in srgb,var(--yellow) 12%,transparent)}.tier-details{margin-top:4px}.tier-details summary{color:var(--cyan);cursor:pointer;font-size:.82em}.tier-details article{padding:2px 0;color:var(--muted);font-size:.8em;white-space:nowrap}.attention{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}.attention:empty{display:none}.attention-item{border:0;border-left:3px solid var(--orange);border-radius:5px;padding:6px 10px;text-align:left;color:var(--vscode-foreground);background:color-mix(in srgb,var(--orange) 12%,var(--vscode-editorWidget-background))}.attention-item.info{border-left-color:var(--blue);background:color-mix(in srgb,var(--blue) 12%,var(--vscode-editorWidget-background))}.change-rows{display:grid;gap:1px;border:1px solid var(--vscode-panel-border);border-radius:9px;overflow:hidden;background:var(--vscode-panel-border)}.change-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(180px,1.4fr) minmax(190px,1fr);gap:12px;align-items:center;padding:8px 12px;background:var(--vscode-editorWidget-background)}.change-row[hidden]{display:none}.change-when small,.change-what small{display:block;color:var(--muted);font-size:.82em}.change-what strong{overflow-wrap:anywhere}.change-amount{text-align:right;white-space:nowrap}.change-amount span{display:block}.change-up{color:var(--orange);font-weight:700}.change-down{color:var(--green);font-weight:700}.change-new{color:var(--muted)}.metrics .metric-link{display:flex;align-items:baseline;gap:5px;border:0;padding:0;background:none;color:var(--muted)}.change-preview{border:0;background:none;gap:0}.change-preview .change-row{grid-template-columns:1fr;gap:2px;padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.change-preview .change-when small{display:none}.change-preview .change-amount{text-align:left}@media(max-width:700px){.change-row{grid-template-columns:1fr;gap:4px}.change-amount{text-align:left}}`;
 var CSS = `
-:root{color-scheme:light dark;--violet:#a78bfa;--blue:#60a5fa;--cyan:#2dd4bf;--pink:#f472b6;--yellow:#facc15;--green:#4ade80;--orange:#fb923c;--muted:var(--vscode-descriptionForeground)}*{box-sizing:border-box}body{margin:0;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-size)/1.4 var(--vscode-font-family)}button,input,select{font:inherit}button{border:1px solid var(--vscode-button-border,var(--vscode-panel-border));border-radius:6px;padding:5px 9px;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);cursor:pointer}.topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:24px;min-height:44px;padding:0 16px;border-bottom:1px solid var(--vscode-panel-border);background:color-mix(in srgb,var(--vscode-editor-background) 94%,transparent);backdrop-filter:blur(12px)}.topbar button{border:0;padding:11px 0;background:none;color:var(--muted)}.topbar .brand{font-weight:750;color:var(--vscode-foreground)}.topbar nav{display:flex;gap:20px}.topbar nav button.active{color:var(--violet);box-shadow:inset 0 -2px var(--violet)}.live{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--muted)}.live i{width:8px;height:8px;border-radius:50%;background:var(--green)}main{padding:12px 16px}.view[hidden],[data-model][hidden]{display:none}h1,h2,h3,h4,p{margin:0}h1{font-size:1.55em}h2{font-size:1.05em}.page-head{margin:5px 0 12px}.page-head p,.empty{color:var(--muted)}.metrics{display:flex;flex-wrap:wrap;gap:8px 28px;padding:2px 2px 10px;color:var(--muted)}.metrics span{display:flex;align-items:baseline;gap:5px}.metrics strong{font-size:1.4em;color:var(--vscode-foreground)}.insight{display:flex;gap:8px;padding:7px 10px;margin-bottom:8px;border-left:3px solid var(--violet);border-radius:5px;background:color-mix(in srgb,var(--violet) 15%,var(--vscode-editorWidget-background))}.insight strong{white-space:nowrap;color:#d8b4fe}.dashboard{display:grid;grid-template-columns:minmax(360px,2fr) minmax(220px,1fr) minmax(220px,1fr);gap:8px;align-items:start}.card{min-width:0;padding:10px;border:1px solid var(--vscode-panel-border);border-radius:9px;background:var(--vscode-editorWidget-background)}.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}.card-head button,.more{color:var(--violet);background:none}.purpose-block{border-top:1px solid color-mix(in srgb,var(--vscode-panel-border) 60%,transparent)}.purpose-block:first-of-type{border-top:0}.purpose-block summary{display:flex;align-items:center;gap:8px;padding:7px 2px;cursor:pointer}.purpose-block summary span{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:color-mix(in srgb,currentColor 16%,transparent);font-weight:800}.purpose-block summary strong{font-size:1.12em}.purpose-coding{color:var(--blue)}.purpose-language{color:var(--cyan)}.purpose-reasoning{color:var(--violet)}.purpose-vision{color:var(--pink)}.purpose-tools{color:var(--yellow)}.purpose-allround{color:#94a3b8}.rank-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 0 8px 30px;color:var(--vscode-foreground)}.rank-column{padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.rank-column h4{display:flex;align-items:center;gap:6px}.rank-column h4 i{width:8px;height:8px;border-radius:50%}.price-free h4{color:var(--green)}.price-free h4 i{background:var(--green)}.price-paid h4{color:var(--orange)}.price-paid h4 i{background:var(--orange)}.rank-column ol{margin:4px 0 0;padding-left:20px}.rank-column li{padding:2px 0}.rank-column li strong,.rank-column li small{display:block}.rank-column li small{color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:4px;width:max-content;border:1px solid color-mix(in srgb,currentColor 32%,transparent);border-radius:999px;padding:1px 6px;background:color-mix(in srgb,currentColor 13%,transparent);font-size:.8em}.badge b{font-size:.85em}.provider i{width:6px;height:6px;border-radius:2px;background:currentColor}.provider-openrouter{color:var(--violet)}.provider-opencode-zen{color:var(--cyan)}.provider-opencode-go{color:var(--blue)}.agent-preview{padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.agent-preview .agent-model span,.agent-preview .agent-identity .badge{display:none}.agent-preview .agent-result small{display:none}.more{width:100%;margin-top:6px}.agent-groups{display:grid;gap:12px}.agent-group{overflow:hidden;border:1px solid var(--vscode-panel-border);border-radius:10px;background:var(--vscode-editorWidget-background)}.agent-group>header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--vscode-panel-border)}.agent-group>header p{color:var(--muted);font-size:.88em}.agent-group>header>span{min-width:28px;padding:3px 8px;border-radius:999px;text-align:center;background:var(--vscode-badge-background)}.agent-group-attention{border-left:3px solid var(--orange)}.agent-group-suitable{border-left:3px solid var(--green)}.agent-group-unknown{border-left:3px solid #94a3b8}.agent-row{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(240px,1.3fr) minmax(190px,1fr);gap:12px;align-items:center;min-width:0;padding:8px 12px;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 55%,transparent)}.agent-row:last-child{border-bottom:0}.agent-identity,.agent-model,.agent-result{min-width:0}.agent-identity{display:flex;align-items:center;gap:8px}.agent-model span,.agent-result small{display:block;color:var(--muted);font-size:.82em}.agent-model strong{display:block;overflow-wrap:anywhere}.agent-result{text-align:right}.status{font-weight:700}.status-suitable,.status-available,.key-state-active{color:var(--green)}.status-alternative-available,.status-expensive,.status-low{color:var(--orange)}.status-deprecated,.status-unsuitable,.status-exhausted,.key-state-disabled,.key-state-expired{color:var(--vscode-errorForeground)}.status-unknown,.status-unavailable,.status-disconnected{color:var(--muted)}.group-empty{padding:12px}.filters{display:grid;grid-template-columns:minmax(190px,1fr) repeat(3,minmax(130px,auto));gap:6px;margin-bottom:8px}.filters input,.filters select{min-width:0;padding:7px 8px;border:1px solid var(--vscode-input-border,var(--vscode-panel-border));border-radius:6px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}.table-wrap{overflow:auto;border:1px solid var(--vscode-panel-border);border-radius:9px}table{width:100%;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid var(--vscode-panel-border);text-align:left;vertical-align:middle}th{position:sticky;top:44px;z-index:2;background:var(--vscode-editorWidget-background);color:var(--muted)}td>strong,td>small{display:block}td>small{color:var(--muted)}.capabilities{display:flex;flex-wrap:wrap;gap:4px}.price{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.price:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.price-free{color:var(--green)}.price-paid{color:var(--orange)}.price-unknown{color:var(--muted)}.provider-sections{display:grid;gap:12px}.account-provider-section{overflow:hidden;border:1px solid var(--vscode-panel-border);border-left:3px solid currentColor;border-radius:10px;background:var(--vscode-editorWidget-background);color:var(--vscode-foreground)}.account-provider-section>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid var(--vscode-panel-border)}.account-provider-section>header p{color:var(--muted)}.provider-title{display:flex;align-items:center;gap:8px;font-size:1.18em;font-weight:750}.provider-title i{width:10px;height:10px;border-radius:3px;background:currentColor}.account-provider-section.provider-openrouter{border-left-color:var(--violet)}.account-provider-section.provider-opencode-zen{border-left-color:var(--cyan)}.account-provider-section.provider-opencode-go{border-left-color:var(--blue)}.account-provider-section.provider-openrouter .provider-title{color:var(--violet)}.account-provider-section.provider-opencode-zen .provider-title{color:var(--cyan)}.account-provider-section.provider-opencode-go .provider-title{color:var(--blue)}.connection-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px}.connection{min-width:0;padding:9px 10px;border:1px solid var(--vscode-panel-border);border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.connection-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.connection-head span{display:block;color:var(--muted);font-size:.84em}.account-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-top:8px}.account-summary small{display:block;color:var(--muted)}.account-summary .status{max-width:55%;text-align:right;overflow-wrap:anywhere}.management-state{margin-top:8px}.account-metrics{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px;padding:0 12px 10px}.account-metric{padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.account-metric strong,.account-metric small{display:block}.account-metric strong{font-size:1.25em}.account-metric small{color:var(--muted)}.metric-good strong{color:var(--green)}.metric-warn strong{color:var(--orange)}.managed-keys{padding:0 12px 12px}.managed-keys>header{display:flex;align-items:end;justify-content:space-between;gap:8px;padding:4px 0 7px}.managed-keys>header span{color:var(--muted);font-size:.84em}.managed-key{display:grid;grid-template-columns:minmax(170px,1.4fr) auto repeat(3,minmax(120px,1fr));gap:12px;align-items:center;padding:8px 10px;border-top:1px solid var(--vscode-panel-border)}.managed-key small,.managed-key strong{display:block}.managed-key small{color:var(--muted)}.managed-key strong{overflow-wrap:anywhere}.notice{margin:8px 16px;padding:7px 10px;border-left:3px solid var(--vscode-errorForeground);border-radius:5px;background:color-mix(in srgb,var(--vscode-errorForeground) 12%,transparent)}
-@media(max-width:1050px){.dashboard{grid-template-columns:minmax(340px,1.5fr) minmax(240px,1fr)}.accounts-card{grid-column:2}.filters{grid-template-columns:1fr 1fr}.account-metrics{grid-template-columns:1fr 1fr}.managed-key{grid-template-columns:1fr auto 1fr 1fr}.managed-key>div:last-child{display:none}}
-@media(max-width:700px){.topbar{gap:12px;overflow-x:auto}.topbar nav{gap:12px}.dashboard{grid-template-columns:1fr}.accounts-card{grid-column:auto}.insight{display:block}.insight strong{display:block}.rank-columns,.connection-grid{grid-template-columns:1fr}.rank-columns{padding-left:0}.filters,.account-metrics{grid-template-columns:1fr}.agent-row{grid-template-columns:1fr;gap:5px}.agent-identity{justify-content:space-between}.agent-result{text-align:left}.managed-key{grid-template-columns:1fr auto}.managed-key>div{display:none}.managed-key>.key-name{display:block}.account-provider-section>header{align-items:flex-start}.account-summary{display:block}.account-summary .status{display:block;max-width:none;margin-top:4px;text-align:left}.managed-keys>header span{display:none}}
+:root{color-scheme:light dark;--violet:#a78bfa;--blue:#60a5fa;--cyan:#2dd4bf;--pink:#f472b6;--yellow:#facc15;--green:#4ade80;--orange:#fb923c;--muted:var(--vscode-descriptionForeground)}*{box-sizing:border-box}body{margin:0;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-size)/1.4 var(--vscode-font-family)}button,input,select{font:inherit}button{border:1px solid var(--vscode-button-border,var(--vscode-panel-border));border-radius:6px;padding:5px 9px;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);cursor:pointer}.topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:24px;min-height:44px;padding:0 16px;border-bottom:1px solid var(--vscode-panel-border);background:color-mix(in srgb,var(--vscode-editor-background) 94%,transparent);backdrop-filter:blur(12px)}.topbar button{border:0;padding:11px 0;background:none;color:var(--muted)}.topbar .brand{font-weight:750;color:var(--vscode-foreground)}.topbar nav{display:flex;gap:20px}.topbar nav button.active{color:var(--violet);box-shadow:inset 0 -2px var(--violet)}.live{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--muted)}.live i{width:8px;height:8px;border-radius:50%;background:var(--green)}main{padding:12px 16px}.view[hidden],[data-model][hidden]{display:none}h1,h2,h3,h4,p{margin:0}h1{font-size:1.55em}h2{font-size:1.05em}.page-head{margin:5px 0 12px}.page-head p,.empty{color:var(--muted)}.metrics{display:flex;flex-wrap:wrap;gap:8px 28px;padding:2px 2px 10px;color:var(--muted)}.metrics span{display:flex;align-items:baseline;gap:5px}.metrics strong{font-size:1.4em;color:var(--vscode-foreground)}.insight{display:flex;gap:8px;padding:7px 10px;margin-bottom:8px;border-left:3px solid var(--violet);border-radius:5px;background:color-mix(in srgb,var(--violet) 15%,var(--vscode-editorWidget-background))}.insight strong{white-space:nowrap;color:#d8b4fe}.dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;align-items:start}.card{min-width:0;padding:10px;border:1px solid var(--vscode-panel-border);border-radius:9px;background:var(--vscode-editorWidget-background)}.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}.card-head button,.more{color:var(--violet);background:none}.purpose-block{border-top:1px solid color-mix(in srgb,var(--vscode-panel-border) 60%,transparent)}.purpose-block:first-of-type{border-top:0}.purpose-block summary{display:flex;align-items:center;gap:8px;padding:7px 2px;cursor:pointer}.purpose-block summary span{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:color-mix(in srgb,currentColor 16%,transparent);font-weight:800}.purpose-block summary strong{font-size:1.12em}.purpose-coding{color:var(--blue)}.purpose-language{color:var(--cyan)}.purpose-reasoning{color:var(--violet)}.purpose-vision{color:var(--pink)}.purpose-tools{color:var(--yellow)}.purpose-allround{color:#94a3b8}.rank-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 0 8px 30px;color:var(--vscode-foreground)}.rank-column{padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.rank-column h4{display:flex;align-items:center;gap:6px}.rank-column h4 i{width:8px;height:8px;border-radius:50%}.price-free h4{color:var(--green)}.price-free h4 i{background:var(--green)}.price-paid h4{color:var(--orange)}.price-paid h4 i{background:var(--orange)}.rank-column ol{margin:4px 0 0;padding-left:20px}.rank-column li{padding:2px 0}.rank-column li strong,.rank-column li small{display:block}.rank-column li small{color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:4px;width:max-content;border:1px solid color-mix(in srgb,currentColor 32%,transparent);border-radius:999px;padding:1px 6px;background:color-mix(in srgb,currentColor 13%,transparent);font-size:.8em}.badge b{font-size:.85em}.provider i{width:6px;height:6px;border-radius:2px;background:currentColor}.provider-openrouter{color:var(--violet)}.provider-opencode-zen{color:var(--cyan)}.provider-opencode-go{color:var(--blue)}.agent-preview{padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.agent-preview .agent-model span,.agent-preview .agent-identity .badge{display:none}.agent-preview .agent-result small{display:none}.more{width:100%;margin-top:6px}.agent-groups{display:grid;gap:12px}.agent-group{overflow:hidden;border:1px solid var(--vscode-panel-border);border-radius:10px;background:var(--vscode-editorWidget-background)}.agent-group>header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--vscode-panel-border)}.agent-group>header p{color:var(--muted);font-size:.88em}.agent-group>header>span{min-width:28px;padding:3px 8px;border-radius:999px;text-align:center;background:var(--vscode-badge-background)}.agent-group-attention{border-left:3px solid var(--orange)}.agent-group-suitable{border-left:3px solid var(--green)}.agent-group-unknown{border-left:3px solid #94a3b8}.agent-row{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(240px,1.3fr) minmax(190px,1fr);gap:12px;align-items:center;min-width:0;padding:8px 12px;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 55%,transparent)}.agent-row:last-child{border-bottom:0}.agent-identity,.agent-model,.agent-result{min-width:0}.agent-identity{display:flex;align-items:center;gap:8px}.agent-model span,.agent-result small{display:block;color:var(--muted);font-size:.82em}.agent-model strong{display:block;overflow-wrap:anywhere}.agent-result{text-align:right}.status{font-weight:700}.status-suitable,.status-available,.key-state-active{color:var(--green)}.status-alternative-available,.status-expensive,.status-low{color:var(--orange)}.status-deprecated,.status-unsuitable,.status-exhausted,.key-state-disabled,.key-state-expired{color:var(--vscode-errorForeground)}.status-unknown,.status-unavailable,.status-disconnected{color:var(--muted)}.group-empty{padding:12px}.filters{display:grid;grid-template-columns:minmax(190px,1fr) repeat(3,minmax(130px,auto));gap:6px;margin-bottom:8px}.filters input,.filters select{min-width:0;padding:7px 8px;border:1px solid var(--vscode-input-border,var(--vscode-panel-border));border-radius:6px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}.table-wrap{overflow:auto;border:1px solid var(--vscode-panel-border);border-radius:9px}table{width:100%;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid var(--vscode-panel-border);text-align:left;vertical-align:middle}th{position:sticky;top:44px;z-index:2;background:var(--vscode-editorWidget-background);color:var(--muted)}td>strong,td>small{display:block}td>small{color:var(--muted)}.capabilities{display:flex;flex-wrap:wrap;gap:4px}.price{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.price:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.price-free{color:var(--green)}.price-paid{color:var(--orange)}.price-unknown{color:var(--muted)}.provider-sections{display:grid;gap:12px}.account-provider-section{overflow:hidden;border:1px solid var(--vscode-panel-border);border-left:3px solid currentColor;border-radius:10px;background:var(--vscode-editorWidget-background);color:var(--vscode-foreground)}.account-provider-section>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid var(--vscode-panel-border)}.account-provider-section>header p{color:var(--muted)}.provider-title{display:flex;align-items:center;gap:8px;font-size:1.18em;font-weight:750}.provider-title i{width:10px;height:10px;border-radius:3px;background:currentColor}.account-provider-section.provider-openrouter{border-left-color:var(--violet)}.account-provider-section.provider-opencode-zen{border-left-color:var(--cyan)}.account-provider-section.provider-opencode-go{border-left-color:var(--blue)}.account-provider-section.provider-openrouter .provider-title{color:var(--violet)}.account-provider-section.provider-opencode-zen .provider-title{color:var(--cyan)}.account-provider-section.provider-opencode-go .provider-title{color:var(--blue)}.connection-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px}.connection{min-width:0;padding:9px 10px;border:1px solid var(--vscode-panel-border);border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.connection-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.connection-head span{display:block;color:var(--muted);font-size:.84em}.account-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-top:8px}.account-summary small{display:block;color:var(--muted)}.account-summary .status{max-width:55%;text-align:right;overflow-wrap:anywhere}.management-state{margin-top:8px}.account-metrics{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px;padding:0 12px 10px}.account-metric{padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.account-metric strong,.account-metric small{display:block}.account-metric strong{font-size:1.25em}.account-metric small{color:var(--muted)}.metric-good strong{color:var(--green)}.metric-warn strong{color:var(--orange)}.managed-keys{padding:0 12px 12px}.managed-keys>header{display:flex;align-items:end;justify-content:space-between;gap:8px;padding:4px 0 7px}.managed-keys>header span{color:var(--muted);font-size:.84em}.managed-key{display:grid;grid-template-columns:minmax(170px,1.4fr) auto repeat(3,minmax(120px,1fr));gap:12px;align-items:center;padding:8px 10px;border-top:1px solid var(--vscode-panel-border)}.managed-key small,.managed-key strong{display:block}.managed-key small{color:var(--muted)}.managed-key strong{overflow-wrap:anywhere}.notice{margin:8px 16px;padding:7px 10px;border-left:3px solid var(--vscode-errorForeground);border-radius:5px;background:color-mix(in srgb,var(--vscode-errorForeground) 12%,transparent)}
+@media(max-width:1050px){.filters{grid-template-columns:1fr 1fr}.account-metrics{grid-template-columns:1fr 1fr}.managed-key{grid-template-columns:1fr auto 1fr 1fr}.managed-key>div:last-child{display:none}}
+@media(max-width:700px){.topbar{gap:12px;overflow-x:auto}.topbar nav{gap:12px}.dashboard{grid-template-columns:1fr}.insight{display:block}.insight strong{display:block}.rank-columns,.connection-grid{grid-template-columns:1fr}.rank-columns{padding-left:0}.filters,.account-metrics{grid-template-columns:1fr}.agent-row{grid-template-columns:1fr;gap:5px}.agent-identity{justify-content:space-between}.agent-result{text-align:left}.managed-key{grid-template-columns:1fr auto}.managed-key>div{display:none}.managed-key>.key-name{display:block}.account-provider-section>header{align-items:flex-start}.account-summary{display:block}.account-summary .status{display:block;max-width:none;margin-top:4px;text-align:left}.managed-keys>header span{display:none}}
 `;
 
 // src/panel/views/models.ts
@@ -505,7 +563,7 @@ function modelFilters() {
 }
 
 // src/panel/views/agents.ts
-var statusLabel = { suitable: "Passend", expensive: "Teuer", "alternative-available": "Alternative", unsuitable: "Unpassend", deprecated: "Veraltet", local: "Lokal", unknown: "Nicht bewertbar" };
+var statusLabel = { suitable: "Passend", "alternative-available": "Alternative", unsuitable: "Unpassend", deprecated: "Veraltet", local: "Lokal", unknown: "Nicht bewertbar" };
 function agentPurpose(agent) {
   const text = `${agent.name} ${agent.description}`.toLowerCase();
   if (/translat|sprach|writ/.test(text)) return "language";
@@ -558,6 +616,21 @@ function renderProviderSection(provider, accounts) {
   return `<section class="account-provider-section provider-${provider}"><header><div><span class="provider-title"><i></i>${name}</span><p>${provider === "opencode-zen" ? "Pay-as-you-go-Guthaben" : "Abo, Kontingent und Reset"}</p></div><button data-action="connect">${account ? "Erneuern" : "Verbinden"}</button></header>${account ? renderAccountSummary(account) : `<p class="empty">Nicht verbunden</p>`}</section>`;
 }
 
+// src/panel/views/history.ts
+var dimensionLabel = { input: "Input", output: "Output", cacheRead: "Cache gelesen", cacheWrite: "Cache geschrieben", request: "je Anfrage" };
+function percentCell(change) {
+  if (change.percent === null) return `<span class="change-new">neu bepreist</span>`;
+  const up = change.percent > 0;
+  return `<span class="${up ? "change-up" : "change-down"}">${up ? "+" : "\u2212"}${amount(Math.abs(change.percent))} %</span>`;
+}
+function historyRows(history) {
+  if (!history.length) return `<p class="empty">Noch keine Preis\xE4nderungen aufgezeichnet</p>`;
+  return history.map((change) => `<article class="change-row" data-change="${esc(`${change.modelId} ${change.provider}`.toLowerCase())}" data-provider="${esc(change.provider)}" data-at="${change.at}"><div class="change-when"><strong>${esc(stamp(change.at))}</strong><small>${esc(change.provider)}</small></div><div class="change-what"><strong>${esc(change.modelId)}</strong><small>${dimensionLabel[change.dimension]}</small></div><div class="change-amount"><span>${esc(money(change.previous))} \u2192 ${esc(money(change.current))}</span>${percentCell(change)}</div></article>`).join("");
+}
+function historyFilters() {
+  return `<div class="filters"><input id="history-search" placeholder="Modelle durchsuchen"><select id="history-provider"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="history-range"><option value="7">Letzte 7 Tage</option><option value="30">Letzte 30 Tage</option><option value="90" selected>Letzte 90 Tage</option></select></div>`;
+}
+
 // src/domain/ranking.ts
 function rankOffers(offers, purpose, priceMode) {
   const fitsPurpose = (offer) => offer.capabilities.purposes.includes(purpose) || purpose === "coding" && offer.benchmarks?.coding !== void 0;
@@ -571,6 +644,13 @@ function rankOffers(offers, purpose, priceMode) {
 }
 
 // src/panel/views/overview.ts
+function renderAttention(items = []) {
+  if (!items.length) return "";
+  return items.map((item) => `<button class="attention-item ${item.severity}" data-view="${item.view}">${esc(item.text)}</button>`).join("");
+}
+function renderHistoryCard(history) {
+  return `<div class="card-head"><h2>Preisverlauf</h2><button data-view="history">Alle ${history.length}</button></div>${history.length ? `<div class="change-rows change-preview">${historyRows(history.slice(0, 3))}</div>` : `<p class="empty">Noch keine Preis\xE4nderungen</p>`}`;
+}
 function renderRanks(offers) {
   return Object.entries(labels).map(([purpose, label], index) => {
     const column = (mode) => {
@@ -588,7 +668,7 @@ function prepare(state2) {
   const assessments = state2.agents.map((agent) => assessAgent(agent, offers));
   return { state: state2, offers, free: offers.filter((offer) => isFreePricing(offer.pricing)).length, assessments, preview: assessments.slice(0, 4) };
 }
-var metricsInner = ({ state: state2, offers, free }) => `<span><strong>${offers.length}</strong>Modelle</span><span><strong>${free}</strong>kostenlos</span><span><strong>${state2.history.length}</strong>\xC4nderungen</span><span><strong>${state2.agents.length}</strong>Agenten</span>`;
+var metricsInner = ({ state: state2, offers, free }) => `<span><strong>${offers.length}</strong>Modelle</span><span><strong>${free}</strong>kostenlos</span><button class="metric-link" data-view="history"><strong>${state2.history.length}</strong>\xC4nderungen</button><span><strong>${state2.agents.length}</strong>Agenten</span>`;
 var insightInner = ({ state: state2 }) => `<strong>\u2726 KI-Fazit</strong><span>${esc(state2.ai?.text ?? "Preis- und Agentendaten werden lokal ausgewertet.")}</span>`;
 var ranksInner = ({ offers }) => `<h2>Beste Modelle f\xFCr deinen Zweck</h2>${renderRanks(offers)}`;
 var overviewAgentsInner = ({ assessments, preview }) => `<div class="card-head"><h2>Deine Agenten</h2><button data-view="agents">Alle ${assessments.length}</button></div>${preview.length ? preview.map((item) => renderAgentRow(item, true)).join("") : `<p class="empty">Keine Agenten erkannt</p>`}${assessments.length > 4 ? `<button class="more" data-view="agents">Mehr Agenten anzeigen</button>` : ""}`;
@@ -598,26 +678,25 @@ function fragments(state2) {
   const view = prepare(state2);
   return {
     metrics: metricsInner(view),
-    // In Etappe 1 dauerhaft leer; Etappe 2 fuellt die Kopfzeile Handlungsbedarf.
-    attention: "",
+    attention: renderAttention(state2.attention),
     insight: insightInner(view),
     "overview-ranks": ranksInner(view),
     "overview-agents": overviewAgentsInner(view),
     "overview-accounts": overviewAccountsInner(view),
+    "overview-history": renderHistoryCard(state2.history),
     models: modelRows(view.offers),
     agents: renderAgentGroups(view.assessments),
-    accounts: accountsInner(view)
+    accounts: accountsInner(view),
+    history: historyRows(state2.history)
   };
 }
 function panelHtml(state2) {
   const nonce = (0, import_crypto.randomBytes)(16).toString("base64"), view = prepare(state2);
-  const refreshError = state2.refreshError ? `<div class="notice error">Aktualisierung fehlgeschlagen: ${esc(state2.refreshError)}</div>` : "";
-  const providerErrors = state2.snapshots.filter((snapshot) => snapshot.error).map((snapshot) => `<div class="notice error">${esc(snapshot.provider)}: ${esc(snapshot.error?.message)}${snapshot.offers.length ? ` \xB7 zeigt weiterhin die Preise vom ${esc(stamp(snapshot.checkedAt))}` : ""}</div>`).join("");
-  const providerWarnings = state2.snapshots.filter((snapshot) => snapshot.warning).map((snapshot) => `<div class="notice warn">${esc(snapshot.provider)}: ${esc(snapshot.warning)}</div>`).join("");
-  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">\xDCbersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header>${refreshError}${providerErrors}${providerWarnings}<main>
-  <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention"></div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section></div></section>
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">\xDCbersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="history">Verlauf</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header><main>
+  <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention">${renderAttention(state2.attention)}</div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section><section class="card history-card" data-fragment="overview-history">${renderHistoryCard(state2.history)}</section></div></section>
   <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${view.offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div class="table-wrap"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th><th>Benchmark</th></tr></thead><tbody data-fragment="models">${modelRows(view.offers)}</tbody></table></div></section>
   <section class="view" id="agents" hidden><div class="page-head"><div><h1>Deine Agenten</h1><p>Nach Handlungsbedarf und Qualit\xE4t geordnet</p></div></div><div class="agent-groups" data-fragment="agents">${renderAgentGroups(view.assessments)}</div></section>
+  <section class="view" id="history" hidden><div class="page-head"><div><h1>Preisverlauf</h1><p>\xC4nderungen der letzten 90 Tage</p></div></div>${historyFilters()}<div class="change-rows" data-fragment="history">${historyRows(state2.history)}</div></section>
   <section class="view" id="accounts" hidden><div class="page-head"><div><h1>Konten &amp; Limits</h1><p>Secrets bleiben ausschlie\xDFlich im lokalen VS Code Secret Store.</p></div></div><div class="provider-sections" data-fragment="accounts">${accountsInner(view)}</div></section></main><script nonce="${nonce}">${SCRIPT}</script></body></html>`;
 }
 
@@ -882,6 +961,17 @@ function refreshPanel() {
 function buildPanel() {
   if (panel) panel.webview.html = panelHtml(state);
 }
+function recomputeAttention() {
+  const offers = state.snapshots.flatMap((snapshot) => snapshot.offers);
+  state.attention = collectAttention({
+    assessments: state.agents.map((agent) => assessAgent(agent, offers)),
+    accounts: state.accounts,
+    history: state.history,
+    snapshots: state.snapshots,
+    refreshError: state.refreshError,
+    jumpPercent: Math.max(1, vscode.workspace.getConfiguration("priceWatch").get("priceJumpPercent", 20))
+  });
+}
 function updateStatus() {
   statusBar.text = `$(pulse) Preise ${state.snapshots.reduce((sum, s) => sum + s.offers.length, 0)} \xB7 ${state.history.length} \u0394`;
   statusBar.tooltip = state.snapshots.map((s) => `${s.provider}: ${s.error ? s.error.message : `${s.offers.length} Modelle`}`).join("\n");
@@ -922,10 +1012,12 @@ async function refresh(context, manual) {
       if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch \xF6ffnen?`, "\xD6ffnen").then((choice) => {
         if (choice) void vscode.commands.executeCommand("priceWatch.open");
       });
+      recomputeAttention();
       updateStatus();
       refreshPanel();
     } catch (error) {
       state = { ...state, refreshError: error instanceof Error ? error.message : String(error) };
+      recomputeAttention();
       updateStatus();
       refreshPanel();
     }
@@ -956,6 +1048,7 @@ async function connectAccount(context) {
   }
   await context.secrets.store(secretKey(provider), token.trim());
   state.accounts = [...state.accounts.filter((item) => item.provider !== provider), account];
+  recomputeAttention();
   refreshPanel();
 }
 async function disconnectAccount(context) {
@@ -963,6 +1056,7 @@ async function disconnectAccount(context) {
   if (!provider) return;
   await context.secrets.delete(secretKey(provider));
   state.accounts = state.accounts.filter((account) => account.provider !== provider);
+  recomputeAttention();
   refreshPanel();
 }
 async function connectOpenRouterManagement(context) {
@@ -972,6 +1066,7 @@ async function connectOpenRouterManagement(context) {
     const management = await fetchOpenRouterManagement(token.trim());
     await context.secrets.store(secretKey("openrouter-management"), token.trim());
     state.openRouterManagement = management;
+    recomputeAttention();
     refreshPanel();
   } catch (error) {
     void vscode.window.showErrorMessage(`Management-Verbindung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`);
@@ -980,6 +1075,7 @@ async function connectOpenRouterManagement(context) {
 async function disconnectOpenRouterManagement(context) {
   await context.secrets.delete(secretKey("openrouter-management"));
   state.openRouterManagement = null;
+  recomputeAttention();
   refreshPanel();
 }
 async function refreshConnectedAccounts(context) {
@@ -1008,6 +1104,7 @@ async function activate(context) {
   state.snapshots = context.globalState.get(SNAPSHOT_KEY) ?? [];
   context.globalState.setKeysForSync([HISTORY_KEY]);
   await refreshConnectedAccounts(context);
+  recomputeAttention();
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBar.command = "priceWatch.open";
   context.subscriptions.push(statusBar);

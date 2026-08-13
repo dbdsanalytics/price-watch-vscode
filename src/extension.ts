@@ -6,8 +6,10 @@ import type { AccountStatus } from "./accounts/types"
 import { fetchOpenRouterAccount, unavailableAccount } from "./accounts/openrouter"
 import { fetchOpenCodeGoAccount } from "./accounts/opencode"
 import { fetchOpenRouterManagement } from "./accounts/openrouter-management"
+import { assessAgent } from "./agents/assessment"
 import type { AgentMetadata } from "./agents/discovery"
 import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
+import { collectAttention } from "./domain/attention"
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
 import { mergeHistory } from "./domain/history"
 import { carryForwardOffers, plausibilityWarning } from "./domain/snapshots"
@@ -59,6 +61,18 @@ function localAgents(): AgentMetadata[] {
 // gewaehlte Ansicht — genau das soll der Fragmenttausch verhindern.
 function refreshPanel(): void { if (panel) void panel.webview.postMessage({ type: "fragments", fragments: fragments(state) }) }
 function buildPanel(): void { if (panel) panel.webview.html = panelHtml(state) }
+
+// Aus dem aktuellen Zustand neu rechnen. Auch Kontoaenderungen und der
+// Fehlerzweig muessen die Kopfzeile auffrischen, sonst erschiene ein knappes
+// Guthaben erst nach dem naechsten Preisabruf.
+function recomputeAttention(): void {
+  const offers = state.snapshots.flatMap((snapshot) => snapshot.offers)
+  state.attention = collectAttention({
+    assessments: state.agents.map((agent) => assessAgent(agent, offers)),
+    accounts: state.accounts, history: state.history, snapshots: state.snapshots, refreshError: state.refreshError,
+    jumpPercent: Math.max(1, vscode.workspace.getConfiguration("priceWatch").get<number>("priceJumpPercent", 20)),
+  })
+}
 function updateStatus(): void { statusBar.text = `$(pulse) Preise ${state.snapshots.reduce((sum,s)=>sum+s.offers.length,0)} · ${state.history.length} Δ`; statusBar.tooltip = state.snapshots.map((s)=>`${s.provider}: ${s.error ? s.error.message : `${s.offers.length} Modelle`}`).join("\n"); statusBar.show() }
 
 async function refresh(context: vscode.ExtensionContext, manual: boolean): Promise<void> {
@@ -94,13 +108,13 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
       await context.globalState.update(HISTORY_KEY, state.history)
       await context.globalState.update(SNAPSHOT_KEY, snapshots)
       if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch öffnen?`, "Öffnen").then((choice)=>{ if (choice) void vscode.commands.executeCommand("priceWatch.open") })
-      updateStatus(); refreshPanel()
+      recomputeAttention(); updateStatus(); refreshPanel()
     } catch (error) {
       // Netzwerkfehler fangen die Loader ab; alles danach — Anreicherung,
       // Verrechnung, Persistenz — lief bisher ungeschuetzt. Beide automatischen
       // Aufrufwege nutzen void refresh(...), eine Rejection blieb also unsichtbar.
       state = { ...state, refreshError: error instanceof Error ? error.message : String(error) }
-      updateStatus(); refreshPanel()
+      recomputeAttention(); updateStatus(); refreshPanel()
     }
   })().finally(() => { running = undefined })
   return running
@@ -128,12 +142,12 @@ async function connectAccount(context: vscode.ExtensionContext): Promise<void> {
   try { account = await verifyAccount(provider as AccountStatus["provider"], token.trim()) }
   catch (error) { void vscode.window.showErrorMessage(`Verbindung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`); return }
   await context.secrets.store(secretKey(provider), token.trim())
-  state.accounts = [...state.accounts.filter((item)=>item.provider!==provider), account]; refreshPanel()
+  state.accounts = [...state.accounts.filter((item)=>item.provider!==provider), account]; recomputeAttention(); refreshPanel()
 }
 
 async function disconnectAccount(context: vscode.ExtensionContext): Promise<void> {
   const provider = await vscode.window.showQuickPick(state.accounts.map((account)=>account.provider), { title: "Kontoverbindung entfernen" }); if (!provider) return
-  await context.secrets.delete(secretKey(provider)); state.accounts = state.accounts.filter((account)=>account.provider!==provider); refreshPanel()
+  await context.secrets.delete(secretKey(provider)); state.accounts = state.accounts.filter((account)=>account.provider!==provider); recomputeAttention(); refreshPanel()
 }
 
 async function connectOpenRouterManagement(context: vscode.ExtensionContext): Promise<void> {
@@ -143,7 +157,7 @@ async function connectOpenRouterManagement(context: vscode.ExtensionContext): Pr
     const management = await fetchOpenRouterManagement(token.trim())
     await context.secrets.store(secretKey("openrouter-management"), token.trim())
     state.openRouterManagement = management
-    refreshPanel()
+    recomputeAttention(); refreshPanel()
   } catch (error) {
     void vscode.window.showErrorMessage(`Management-Verbindung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`)
   }
@@ -152,7 +166,7 @@ async function connectOpenRouterManagement(context: vscode.ExtensionContext): Pr
 async function disconnectOpenRouterManagement(context: vscode.ExtensionContext): Promise<void> {
   await context.secrets.delete(secretKey("openrouter-management"))
   state.openRouterManagement = null
-  refreshPanel()
+  recomputeAttention(); refreshPanel()
 }
 
 async function refreshConnectedAccounts(context: vscode.ExtensionContext): Promise<void> {
@@ -171,6 +185,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   state.snapshots = context.globalState.get<ProviderSnapshot[]>(SNAPSHOT_KEY) ?? []
   context.globalState.setKeysForSync([HISTORY_KEY])
   await refreshConnectedAccounts(context)
+  recomputeAttention()
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100); statusBar.command = "priceWatch.open"; context.subscriptions.push(statusBar)
   context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => { if (!panel) { panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }); panel.onDidDispose(()=>panel=undefined); panel.webview.onDidReceiveMessage((message)=>{ if (message?.type === "connect") void connectAccount(context); if (message?.type === "disconnect") void disconnectAccount(context); if (message?.type === "connect-management") void connectOpenRouterManagement(context); if (message?.type === "disconnect-management") void disconnectOpenRouterManagement(context); if (message?.type === "ready") refreshPanel() }); buildPanel() } else { panel.reveal(); refreshPanel() } }), vscode.commands.registerCommand("priceWatch.refresh", ()=>refresh(context,true)), vscode.commands.registerCommand("priceWatch.setKey", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.disconnectAccount", ()=>disconnectAccount(context)), vscode.commands.registerCommand("priceWatch.connectOpenRouterManagement", ()=>connectOpenRouterManagement(context)))
   const hours = Math.max(1, vscode.workspace.getConfiguration("priceWatch").get<number>("checkIntervalHours",1)); const timer = setInterval(()=>void refresh(context,false),hours*3_600_000); context.subscriptions.push({ dispose:()=>clearInterval(timer) })

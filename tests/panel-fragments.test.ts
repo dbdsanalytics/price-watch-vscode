@@ -49,3 +49,9 @@ test("sichert Ansicht und Filter im Webview-Zustand", () => {
   expect(html).toContain("vscode.setState")
   expect(html).toContain("vscode.getState")
 })
+
+test("die Uebersicht fuehrt eine Verlaufskarte", () => {
+  const html = panelHtml(state([offer("a", 1)]))
+  expect(html).toContain('data-fragment="overview-history"')
+  expect(html).toContain("Preisverlauf")
+})
