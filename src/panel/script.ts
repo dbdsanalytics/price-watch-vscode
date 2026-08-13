@@ -31,6 +31,16 @@ const applyFilter = () => {
 }
 ;['search', 'provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener(id === 'search' ? 'input' : 'change', () => { applyFilter(); save() }))
 
+const applyHistoryFilter = () => {
+  const q = document.getElementById('history-search').value.toLowerCase()
+  const p = document.getElementById('history-provider').value
+  const cutoff = Date.now() - Number(document.getElementById('history-range').value) * 86400000
+  document.querySelectorAll('[data-change]').forEach((row) => {
+    row.hidden = !(row.dataset.change.includes(q) && (!p || row.dataset.provider === p) && Number(row.dataset.at) >= cutoff)
+  })
+}
+;['history-search', 'history-provider', 'history-range'].forEach((id) => document.getElementById(id).addEventListener(id === 'history-search' ? 'input' : 'change', applyHistoryFilter))
+
 // Ein Tausch verwirft den Inhalt samt aufgeklappten Bereichen und der
 // Scrollposition der Tabelle. Beides wird um den Tausch herum gerettet.
 const replaceFragment = (id, html) => {
@@ -56,6 +66,8 @@ window.addEventListener('message', (event) => {
     replaceFragment(id, html)
   }
   applyFilter()
+  // Ein getauschtes Verlaufsfragment zeigte sonst wieder alle Zeilen.
+  applyHistoryFilter()
 })
 
 const restore = () => {
