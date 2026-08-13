@@ -69,3 +69,12 @@ test("beschriftet Arena-Kategorien und zeigt die ELO-Wertung", () => {
   expect(html).not.toContain("arena_website")
   expect(html).toContain("ELO 1332")
 })
+
+test("zeigt bei Go-Modellen das Kontingent statt nur den Token-Preis", () => {
+  const go: any = { provider: "opencode-go", id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", pricing: { input: 0.14, output: 0.28 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: 1000, purposes: ["coding"] },
+    quota: { requestsPerMonth: 158_150, includedUsdPerMonth: 60 } }
+  const html = panelHtml({ snapshots: [{ provider: "opencode-go", offers: [go], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain("158.150 Anfragen/Monat")
+  expect(html).toContain("enthalten")
+})
