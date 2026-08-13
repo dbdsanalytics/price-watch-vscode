@@ -86,8 +86,10 @@ describe("unlesbare Preiszellen", () => {
     expect(isFreePricing(offer.pricing)).toBe(false)
   })
 
+  // Beide Spalten muessen "Free" tragen: mit "$0.28" im Output waere das
+  // Modell zu Recht nicht kostenlos, und der Test pruefte nichts.
   test("laesst echte Gratis-Modelle kostenlos", () => {
-    const [offer] = parseZenDocument(doc("Free"))
+    const [offer] = parseZenDocument(`${endpoints}\n## Pricing\n| Model | Input | Output |\n|---|---|---|\n| DeepSeek V4 Flash | Free | Free |`)
     expect(offer.pricing.unknown).toBeUndefined()
     expect(isFreePricing(offer.pricing)).toBe(true)
   })

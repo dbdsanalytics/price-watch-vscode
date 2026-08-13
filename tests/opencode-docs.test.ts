@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { norm, parseGoDocument, parseZenDocument, requireOffers, toUsd } from "../src/providers/opencode-docs"
+import { isFreePricing } from "../src/domain/model"
 
 describe("norm", () => {
   test("entfernt Klammer-Inhalte und normalisiert", () => {
@@ -12,9 +13,18 @@ describe("norm", () => {
 describe("toUsd", () => {
   test("parst Dollar-Zellen", () => {
     expect(toUsd("$0.14")).toBe(0.14)
+    expect(toUsd("$0.0028")).toBe(0.0028)
     expect(toUsd("Free")).toBe(0)
-    expect(toUsd("-")).toBe(0)
-    expect(toUsd(undefined)).toBe(0)
+  })
+
+  // "Free" ist eine Aussage, ein unlesbarer Wert ist keine. Beides als 0 zu
+  // lesen liess bezahlte Modelle im Kostenlos-Ranking auftauchen.
+  test("meldet Unlesbares als unbekannt statt als kostenlos", () => {
+    expect(toUsd("-")).toBeUndefined()
+    expect(toUsd(undefined)).toBeUndefined()
+    expect(toUsd("")).toBeUndefined()
+    expect(toUsd("1,40 $")).toBeUndefined()
+    expect(toUsd("$1.40/M")).toBeUndefined()
   })
 })
 
@@ -124,5 +134,32 @@ describe("Go: Kontingent", () => {
   test("Zen kennt kein Kontingent", () => {
     const zen = parseZenDocument(`${endpoints}\n## Pricing\n| Model | Input | Output |\n|---|---|---|\n| DeepSeek V4 Flash | $0.14 | $0.28 |`)
     expect(zen[0].quota).toBeUndefined()
+  })
+})
+
+// Regel 1 aus AGENTS.md galt bisher nur fuer ganze Dokumente. Eine einzelne
+// unlesbare Zelle machte aus einem bezahlten Modell ein kostenloses.
+describe("unlesbare Preiszellen", () => {
+  const doc = (input: string) => `${endpoints}\n## Pricing\n| Model | Input | Output |\n|---|---|---|\n| DeepSeek V4 Flash | ${input} | $0.28 |`
+
+  test("markiert das Angebot als unbekannt und nicht als kostenlos", () => {
+    const [offer] = parseZenDocument(doc("1,40 $"))
+    expect(offer.pricing.unknown).toBe(true)
+    expect(isFreePricing(offer.pricing)).toBe(false)
+  })
+
+  test("laesst echte Gratis-Modelle kostenlos", () => {
+    const [offer] = parseZenDocument(`${endpoints}\n## Pricing\n| Model | Input | Output |\n|---|---|---|\n| DeepSeek V4 Flash | Free | Free |`)
+    expect(offer.pricing.unknown).toBeUndefined()
+    expect(isFreePricing(offer.pricing)).toBe(true)
+  })
+
+  // toUsd liefert jetzt undefined statt 0; die Kontingent-Berechnung muss das
+  // abfangen, sonst verschwindet die enthaltene Monatsnutzung.
+  test("laesst die Kontingentwerte unberuehrt", async () => {
+    const offers = parseGoDocument(await Bun.file(`${import.meta.dir}/fixtures-go.mdx`).text()).offers
+    expect(offers.find((offer) => offer.id === "deepseek-v4-flash")!.quota).toMatchObject({ requestsPerMonth: 158_150, includedUsdPerMonth: 60 })
+    // MiniMax M2.5 fehlt in der Anfragen-Tabelle der Quelle: uebrige Werte bleiben.
+    expect(offers.find((offer) => offer.id === "minimax-m2.5")!.quota).toEqual({ includedUsdPerMonth: 60 })
   })
 })

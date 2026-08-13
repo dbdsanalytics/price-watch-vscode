@@ -6,12 +6,15 @@ export function norm(name: string): string {
   return String(name).toLowerCase().replace(/\(.*\)/g, "").replace(/[^a-z0-9.]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
 }
 
-/** Dollar-Zelle der Preistabelle lesen; "Free", "-" und Leerwerte gelten als 0. */
-export function toUsd(cell: string | undefined): number {
+/**
+ * Dollar-Zelle der Preistabelle lesen. "Free" ist eine Aussage und ergibt 0;
+ * alles Unlesbare ergibt undefined, damit es nicht als kostenlos durchgeht.
+ */
+export function toUsd(cell: string | undefined): number | undefined {
   const value = String(cell ?? "").trim()
-  if (!value || value === "-") return 0
-  const parsed = Number.parseFloat(value.replace("$", ""))
-  return Number.isNaN(parsed) ? 0 : parsed
+  if (/^free$/i.test(value)) return 0
+  const match = value.match(/^\$?(\d+(?:\.\d+)?)$/)
+  return match ? Number(match[1]) : undefined
 }
 
 /** Anzahl aus einer Tabellenzelle; "2,150" darf nicht als 2 ankommen. */
@@ -74,10 +77,12 @@ function parsePricing(mdx: string, provider: ProviderId): ModelOffer[] {
     // dieselbe ID. Die erste Zeile ist die Basisstufe; ihr Name traegt die
     // Stufe mit, sodass die Oberflaeche sie nicht verschweigt.
     if (offers.some((offer) => offer.id === id)) continue
-    const included = usageColumn > 0 ? toUsd(row[usageColumn]) : 0
+    const included = usageColumn > 0 ? toUsd(row[usageColumn]) ?? 0 : 0
     const counted = requests.get(base) ?? requests.get(base.replace(/-tokens$/, ""))
     const quota: ModelQuota | undefined = included || counted ? { ...counted, ...(included ? { includedUsdPerMonth: included } : {}) } : undefined
-    offers.push({ provider, id, name: row[0], ...(quota ? { quota } : {}), pricing: { input: toUsd(row[1]), output: toUsd(row[2]), cacheRead: toUsd(row[3]), cacheWrite: toUsd(row[4]) }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding", "tools"] } })
+    const input = toUsd(row[1]), output = toUsd(row[2])
+    const unknown = input === undefined || output === undefined
+    offers.push({ provider, id, name: row[0], ...(quota ? { quota } : {}), pricing: { input: input ?? 0, output: output ?? 0, ...(unknown ? { unknown: true } : {}), cacheRead: toUsd(row[3]) ?? 0, cacheWrite: toUsd(row[4]) ?? 0 }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding", "tools"] } })
   }
   return offers
 }
