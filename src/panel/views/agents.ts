@@ -4,7 +4,7 @@ import type { Purpose } from "../../domain/ranking"
 import { esc } from "../format"
 import { purposeBadge } from "./models"
 
-export const statusLabel: Record<AgentAssessment["status"],string> = { suitable:"Passend", expensive:"Teuer", "alternative-available":"Alternative", unsuitable:"Unpassend", deprecated:"Veraltet", local:"Lokal", unknown:"Nicht bewertbar" }
+export const statusLabel: Record<AgentAssessment["status"],string> = { suitable:"Passend", "alternative-available":"Alternative", unsuitable:"Unpassend", deprecated:"Veraltet", local:"Lokal", unknown:"Nicht bewertbar" }
 
 function agentPurpose(agent: AgentMetadata): Purpose {
   const text = `${agent.name} ${agent.description}`.toLowerCase()

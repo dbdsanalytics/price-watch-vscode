@@ -1,7 +1,7 @@
 import type { AgentMetadata } from "./discovery"
 import type { ModelOffer } from "../domain/model"
 
-export interface AgentAssessment { agent: AgentMetadata; status: "suitable" | "expensive" | "alternative-available" | "unsuitable" | "deprecated" | "local" | "unknown"; reason: string; alternative?: ModelOffer }
+export interface AgentAssessment { agent: AgentMetadata; status: "suitable" | "alternative-available" | "unsuitable" | "deprecated" | "local" | "unknown"; reason: string; alternative?: ModelOffer }
 
 export function assessAgent(agent: AgentMetadata, offers: ModelOffer[]): AgentAssessment {
   if (/^(lmstudio|ollama|local)[/:]/i.test(agent.model)) return { agent, status: "local", reason: "Lokales Modell · keine öffentlichen Preis- oder Benchmarkdaten" }
