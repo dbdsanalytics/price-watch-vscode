@@ -26,19 +26,30 @@ function idsFromDocument(mdx: string): Map<string, string> {
   return ids
 }
 
+/** Kopfzeile einer Preistabelle: fuehrt Modell UND Input/Output-Spalten. */
+const isPriceHeader = (row: string[]) => /^Model/i.test(row[0] ?? "") && row.some((cell) => /^Input$/i.test(cell)) && row.some((cell) => /^Output$/i.test(cell))
+
 function parsePricing(mdx: string, provider: ProviderId): ModelOffer[] {
   const ids = idsFromDocument(mdx)
   const offers: ModelOffer[] = []
-  let pricing = false
+  let pricing = false, inPriceTable = false
   for (const line of mdx.split("\n")) {
     if (/^## (Pricing|Usage limits)/i.test(line)) { pricing = true; continue }
     if (pricing && /^## /.test(line)) break
     if (!pricing || !line.startsWith("|")) continue
     const row = cells(line)
-    if (!row[0] || /^(Model|-+)/i.test(row[0])) continue
+    // Der Abschnitt kann mehrere Tabellen enthalten (Anfragen je Zeitraum,
+    // dann Preise). Nur Zeilen unter einem Preis-Kopf sind Preise.
+    if (/^Model/i.test(row[0] ?? "")) { inPriceTable = isPriceHeader(row); continue }
+    if (!inPriceTable) continue
+    if (!row[0] || /^-+$/.test(row[0])) continue
     const base = norm(row[0])
     const id = ids.get(base) ?? ids.get(base.replace(/-tokens$/, ""))
     if (!id) continue
+    // Gestufte Preise ("≤ 272K tokens" / "> 272K tokens") ergeben nach norm()
+    // dieselbe ID. Die erste Zeile ist die Basisstufe; ihr Name traegt die
+    // Stufe mit, sodass die Oberflaeche sie nicht verschweigt.
+    if (offers.some((offer) => offer.id === id)) continue
     offers.push({ provider, id, name: row[0], pricing: { input: toUsd(row[1]), output: toUsd(row[2]), cacheRead: toUsd(row[3]), cacheWrite: toUsd(row[4]) }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding", "tools"] } })
   }
   return offers

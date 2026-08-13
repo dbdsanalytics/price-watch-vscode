@@ -61,3 +61,44 @@ describe("requireOffers", () => {
     expect(() => requireOffers("opencode-zen", parseZenDocument(umbenannt))).toThrow()
   })
 })
+
+// Der Abschnitt "Usage limits" im Go-Dokument enthaelt ZWEI Tabellen: erst die
+// Anfragen pro Zeitraum, dann die Preise. Der Parser las beide als Preise —
+// "120 Anfragen pro 5 Stunden" wurde zu 120 Dollar je Million Token, und
+// "2,150" verstuemmelte parseFloat zu 2.
+describe("Go: zwei Tabellen im selben Abschnitt", () => {
+  const doc = `${endpoints}
+$5 for your first month, then $10/month
+## Usage limits
+| Model | requests per 5 hour | requests per week | requests per month |
+| --- | --- | --- | --- |
+| DeepSeek V4 Flash | 31,650 | 79,050 | 158,150 |
+| GPT 5.6 Luna | 2,050 | 5,100 | 10,250 |
+
+| Model | Input | Output | Cached Read | Cached Write | Usage |
+| --- | --- | --- | --- | --- | --- |
+| DeepSeek V4 Flash | $0.14 | $0.28 | $0.0028 | - | $60 |
+`
+
+  test("liest nur die Preistabelle, nicht die Anfragen-Tabelle", () => {
+    const offers = parseGoDocument(doc).offers
+    expect(offers).toHaveLength(1)
+    expect(offers[0]).toMatchObject({ id: "deepseek-v4-flash", pricing: { input: 0.14, output: 0.28 } })
+  })
+
+  test("erzeugt keine doppelten Eintraege je Modell", () => {
+    const ids = parseGoDocument(doc).offers.map((offer) => offer.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  test("am echten Dokument: keine Duplikate und keine Fantasiepreise", async () => {
+    const offers = parseGoDocument(await Bun.file(`${import.meta.dir}/fixtures-go.mdx`).text()).offers
+    const ids = offers.map((offer) => offer.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(offers.filter((offer) => offer.pricing.input > 50)).toHaveLength(0)
+    // Gestufte Modelle behalten die Basisstufe, und der Name benennt sie.
+    const luna = offers.find((offer) => offer.id === "gpt-5.6-luna")!
+    expect(luna.pricing).toMatchObject({ input: 0.2, output: 1.2 })
+    expect(luna.name).toContain("272K")
+  })
+})
