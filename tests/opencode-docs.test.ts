@@ -106,10 +106,11 @@ $5 for your first month, then $10/month
     const ids = offers.map((offer) => offer.id)
     expect(new Set(ids).size).toBe(ids.length)
     expect(offers.filter((offer) => offer.pricing.input > 50)).toHaveLength(0)
-    // Gestufte Modelle behalten die Basisstufe, und der Name benennt sie.
+    // Gestufte Modelle behalten die Basisstufe; die Stufe steht in tier, nicht im Namen.
     const luna = offers.find((offer) => offer.id === "gpt-5.6-luna")!
     expect(luna.pricing).toMatchObject({ input: 0.2, output: 1.2 })
-    expect(luna.name).toContain("272K")
+    expect(luna.name).toBe("GPT 5.6 Luna")
+    expect(luna.tier).toBe("≤ 272K tokens")
   })
 })
 
@@ -161,5 +162,47 @@ describe("unlesbare Preiszellen", () => {
     expect(offers.find((offer) => offer.id === "deepseek-v4-flash")!.quota).toMatchObject({ requestsPerMonth: 158_150, includedUsdPerMonth: 60 })
     // MiniMax M2.5 fehlt in der Anfragen-Tabelle der Quelle: uebrige Werte bleiben.
     expect(offers.find((offer) => offer.id === "minimax-m2.5")!.quota).toEqual({ includedUsdPerMonth: 60 })
+  })
+})
+
+// Zen und Go fuehren dasselbe Modell zweimal: "(≤ 272K tokens)" und
+// "(> 272K tokens)". Da norm() Klammern entfernt, kollidierten die IDs und die
+// teure Stufe wurde verworfen — GPT 5.6 Sol erschien mit $5 statt $5–10.
+describe("gestufte Preise", () => {
+  const zen = async () => parseZenDocument(await Bun.file(`${import.meta.dir}/fixtures-zen.mdx`).text())
+
+  test("fuehrt beide Stufen eines Modells zusammen", async () => {
+    const sol = (await zen()).find((offer) => offer.id === "gpt-5.6-sol")!
+    expect(sol.name).toBe("GPT 5.6 Sol")
+    expect(sol.tier).toBe("≤ 272K tokens")
+    expect(sol.pricing).toMatchObject({ input: 5, output: 30 })
+    expect(sol.pricing.tiers).toEqual([{ thresholdTokens: 272_000, label: "> 272K tokens", input: 10, output: 45 }])
+  })
+
+  test("erkennt auch die 200K-Schwelle", async () => {
+    const grok = (await zen()).find((offer) => offer.id === "grok-4.6")!
+    expect(grok.pricing).toMatchObject({ input: 2, output: 6 })
+    expect(grok.pricing.tiers).toEqual([{ thresholdTokens: 200_000, label: "> 200K tokens", input: 4, output: 12 }])
+  })
+
+  test("erzeugt weiterhin genau ein Angebot je Modell", async () => {
+    const offers = await zen()
+    const ids = offers.map((offer) => offer.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(offers).toHaveLength(61)
+    expect(offers.filter((offer) => offer.pricing.tiers?.length)).toHaveLength(9)
+  })
+
+  test("Go liest die Stufen ebenso", async () => {
+    const offers = parseGoDocument(await Bun.file(`${import.meta.dir}/fixtures-go.mdx`).text()).offers
+    const qwen = offers.find((offer) => offer.id === "qwen3.6-plus")!
+    expect(qwen.pricing).toMatchObject({ input: 0.5, output: 3 })
+    expect(qwen.pricing.tiers).toEqual([{ thresholdTokens: 256_000, label: "> 256K tokens", input: 2, output: 6 }])
+    expect(offers).toHaveLength(19)
+    expect(offers.filter((offer) => offer.pricing.tiers?.length)).toHaveLength(3)
+  })
+
+  test("einstufige Modelle bekommen kein tiers-Feld", async () => {
+    expect((await zen()).find((offer) => offer.id === "kimi-k3")!.pricing.tiers).toBeUndefined()
   })
 })
