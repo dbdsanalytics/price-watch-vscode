@@ -10,6 +10,8 @@ export interface ProviderSnapshot {
   checkedAt: number
   stale: boolean
   error?: ProviderError
+  /** Daten sind da, aber verdaechtig — im Gegensatz zu error kein Ausfall. */
+  warning?: string
 }
 
 export type Attempt<T> = { ok: true; value: T } | { ok: false; error: ProviderError }

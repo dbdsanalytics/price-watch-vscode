@@ -101,3 +101,31 @@ test("laesst kein Markup aus Zahlenfeldern der API durch", () => {
   expect(html).not.toContain("<b>roh</b>")
   expect(html).not.toContain("<i>roh</i>")
 })
+
+const tiered = {
+  provider: "opencode-zen" as const, id: "gpt-5.6-sol", name: "GPT 5.6 Sol", tier: "≤ 272K tokens",
+  pricing: { input: 5, output: 30, tiers: [{ thresholdTokens: 272_000, label: "> 272K tokens", input: 10, output: 45 }] },
+  capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: null, purposes: ["coding" as const] },
+}
+
+test("zeigt bei gestuften Preisen die Spanne und die Schwellen", () => {
+  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain("5–10 $")
+  expect(html).toContain("30–45 $")
+  expect(html).toContain("&gt; 272K tokens")
+  expect(html).toContain("≤ 272K tokens")
+})
+
+// Bei Go entscheidet das Kontingent, nicht der Token-Preis. Fehlt es, ist das
+// Modell unvergleichbar — das muss dastehen, statt stumm zu fehlen.
+test("benennt ein fehlendes Anfragenkontingent", () => {
+  const ohne = { ...tiered, provider: "opencode-go" as const, id: "minimax-m2.5", name: "MiniMax M2.5", pricing: { input: 0.3, output: 1.2 }, quota: { includedUsdPerMonth: 60 } }
+  const html = panelHtml({ snapshots: [{ provider: "opencode-go", checkedAt: 1, stale: false, offers: [ohne] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain("Anfragen nicht in der Quelle")
+})
+
+test("zeigt eine Warnung als Hinweis, nicht als Fehler", () => {
+  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered], warning: "Nur 42 statt zuletzt 61 Modelle gelesen" }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain("Nur 42 statt zuletzt 61 Modelle gelesen")
+  expect(html).toContain('class="notice warn"')
+})

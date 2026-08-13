@@ -1,9 +1,19 @@
 import type { ProviderId } from "./provider"
 
+/** Gestufte Preise: oberhalb der Schwelle gilt ein anderer Tarif. */
+export interface PriceTier {
+  thresholdTokens: number
+  label: string
+  input: number
+  output: number
+}
+
 export interface ModelPricing {
   input: number
   output: number
   unknown?: boolean
+  /** Nur die Stufen oberhalb der Basis, aufsteigend nach thresholdTokens. */
+  tiers?: PriceTier[]
   cacheRead?: number
   cacheWrite?: number
   request?: number

@@ -10,7 +10,7 @@ import type { AgentMetadata } from "./agents/discovery"
 import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
 import { mergeHistory } from "./domain/history"
-import { carryForwardOffers } from "./domain/snapshots"
+import { carryForwardOffers, plausibilityWarning } from "./domain/snapshots"
 import { shouldRunAi } from "./domain/ai-schedule"
 import { enrichProviderBenchmarks } from "./domain/benchmarks"
 import { BENCHMARK_CACHE_KEY, loadBenchmarks } from "./domain/benchmark-cache"
@@ -65,11 +65,18 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
       const benchmarkSnapshot=openRouterKey
         ? await loadBenchmarks(context.globalState,openRouterKey,manual,fetchOpenRouterBenchmarks)
         : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
-      const snapshots = carryForwardOffers(state.snapshots, enrichProviderBenchmarks(await fetchAllProviders({
+      const previousByProvider = new Map(state.snapshots.map((snapshot) => [snapshot.provider, snapshot]))
+      const fresh = enrichProviderBenchmarks(await fetchAllProviders({
         openrouter: fetchOpenRouterCatalog,
         "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
         "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers),
-      }),benchmarkSnapshot))
+      }),benchmarkSnapshot).map((snapshot) => {
+        // Vor carryForwardOffers: danach stammen die Angebote womoeglich aus
+        // dem alten Stand und der Vergleich waere gegen sich selbst.
+        const warning = plausibilityWarning(previousByProvider.get(snapshot.provider), snapshot)
+        return warning ? { ...snapshot, warning } : snapshot
+      })
+      const snapshots = carryForwardOffers(state.snapshots, fresh)
       const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
       const changes = diffOffers(previous, successful)
       state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now(), refreshError: null }

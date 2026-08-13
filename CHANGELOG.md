@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5 – 2026-08-13
+
+- Zeigt gestufte Preise vollständig: Elf Modelle kosten oberhalb einer Kontextschwelle mehr — GPT 5.6 Sol $10 statt $5, Grok 4.6 $4 statt $2. Bisher war nur die günstige Stufe sichtbar, und die Ranglisten sortierten danach.
+- Behandelt eine unlesbare Preiszelle als unbekannt statt als kostenlos; ein bezahltes Modell konnte so im Kostenlos-Ranking landen.
+- Benennt fehlende Anfragenkontingente bei OpenCode Go, statt nur den enthaltenen Dollarwert zu zeigen.
+- Warnt, wenn ein Anbieterdokument deutlich weniger Modelle liefert als zuvor oder Preise unlesbar werden.
+
 ## 0.2.4 – 2026-08-13
 
 - Zeigt bei OpenCode Go, wie viele Anfragen das Abo hergibt und wie viel Nutzung enthalten ist — bei Go entscheidet das Kontingent, nicht der Token-Preis: Kimi K3 kostet je Token das Einundzwanzigfache von DeepSeek V4 Flash, liefert aber 323-mal weniger Anfragen.

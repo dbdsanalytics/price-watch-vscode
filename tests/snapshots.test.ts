@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { carryForwardOffers } from "../src/domain/snapshots"
+import { carryForwardOffers, plausibilityWarning } from "../src/domain/snapshots"
 import type { ModelOffer } from "../src/domain/model"
 import type { ProviderSnapshot } from "../src/domain/provider"
 
@@ -37,4 +37,35 @@ test("rettet die letzten Preise auch bei leerem Ergebnis ohne Fehler", () => {
   expect(snapshot.offers).toEqual([offer("a", 1)])
   expect(snapshot.checkedAt).toBe(1_000)
   expect(snapshot.stale).toBe(true)
+})
+
+// Zweimal hat eine Strukturaenderung der OpenCode-Doku still falsche Preise
+// erzeugt. Der Waechter macht den Verdacht sichtbar, ohne den Abruf zu
+// verwerfen — die Daten sind da, sie sind nur verdaechtig.
+const many = (count: number, unknown = 0) => Array.from({ length: count }, (_, index) => {
+  const item = offer(`m${index}`, 1)
+  return index < unknown ? { ...item, pricing: { ...item.pricing, unknown: true } } : item
+})
+
+test("meldet einen Einbruch der Modellzahl", () => {
+  const warning = plausibilityWarning(ok(many(61), 1_000), ok(many(42), 2_000))
+  expect(warning).toContain("42")
+  expect(warning).toContain("61")
+})
+
+test("schweigt bei einem massvollen Rueckgang", () => {
+  expect(plausibilityWarning(ok(many(61), 1_000), ok(many(55), 2_000))).toBeUndefined()
+})
+
+test("meldet Modelle, die ihren lesbaren Preis verloren haben", () => {
+  const warning = plausibilityWarning(ok(many(10), 1_000), ok(many(10, 3), 2_000))
+  expect(warning).toContain("3")
+})
+
+test("schweigt ohne vorherigen Stand", () => {
+  expect(plausibilityWarning(undefined, ok(many(10), 2_000))).toBeUndefined()
+})
+
+test("schweigt, wenn der frische Abruf bereits einen Fehler meldet", () => {
+  expect(plausibilityWarning(ok(many(61), 1_000), failed(2_000))).toBeUndefined()
 })
