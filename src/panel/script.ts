@@ -6,10 +6,19 @@ export const SCRIPT = `
 const vscode = acquireVsCodeApi()
 const shown = {}
 
+// Verwirft VS Code das Webview — Tab lange im Hintergrund, Fenster neu geladen —,
+// baut es die Seite von vorn auf. retainContextWhenHidden hilft nur innerhalb
+// einer Sitzung, dieser Zustand ueberdauert sie.
+const save = () => vscode.setState({
+  view: [...document.querySelectorAll('.view')].find((view) => !view.hidden)?.id ?? 'overview',
+  search: search.value, provider: provider.value, price: price.value, purpose: purpose.value,
+})
+
 const show = (id) => {
   document.querySelectorAll('.view').forEach((view) => { view.hidden = view.id !== id })
   document.querySelectorAll('[data-view]').forEach((button) => { button.classList.toggle('active', button.dataset.view === id) })
   scrollTo(0, 0)
+  save()
 }
 document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => show(button.dataset.view)))
 document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
@@ -20,7 +29,7 @@ const applyFilter = () => {
     row.hidden = !(row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u)))
   })
 }
-;['search', 'provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener(id === 'search' ? 'input' : 'change', applyFilter))
+;['search', 'provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener(id === 'search' ? 'input' : 'change', () => { applyFilter(); save() }))
 
 // Ein Tausch verwirft den Inhalt samt aufgeklappten Bereichen und der
 // Scrollposition der Tabelle. Beides wird um den Tausch herum gerettet.
@@ -48,6 +57,18 @@ window.addEventListener('message', (event) => {
   }
   applyFilter()
 })
+
+const restore = () => {
+  const saved = vscode.getState()
+  if (!saved) return
+  search.value = saved.search ?? ''
+  provider.value = saved.provider ?? ''
+  price.value = saved.price ?? ''
+  purpose.value = saved.purpose ?? ''
+  applyFilter()
+  if (saved.view) show(saved.view)
+}
+restore()
 
 // Ohne diese Meldung bliebe "shown" bis zum ersten Abruf leer — der wuerde
 // dann alle Fragmente tauschen, obwohl ihr Inhalt schon im Dokument steht,

@@ -43,3 +43,9 @@ test("das Webview-Skript tauscht nur geaenderte Fragmente", () => {
   expect(html).toContain("data-fragment=")
   expect(html).not.toContain("onclick=")
 })
+
+test("sichert Ansicht und Filter im Webview-Zustand", () => {
+  const html = panelHtml(state([offer("a", 1)]))
+  expect(html).toContain("vscode.setState")
+  expect(html).toContain("vscode.getState")
+})
