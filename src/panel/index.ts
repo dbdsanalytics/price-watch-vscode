@@ -9,7 +9,7 @@ import { renderAgentGroups, renderAgentRow } from "./views/agents"
 import { renderAccountSummary, renderOpenRouterSection, renderProviderSection } from "./views/accounts"
 import { historyFilters, historyRows } from "./views/history"
 import { modelFilters, modelRows } from "./views/models"
-import { renderAttention, renderRanks } from "./views/overview"
+import { renderAttention, renderHistoryCard, renderRanks } from "./views/overview"
 
 interface PreparedView { state: DashboardState; offers: ModelOffer[]; free: number; assessments: AgentAssessment[]; preview: AgentAssessment[] }
 
@@ -31,7 +31,7 @@ const overviewAgentsInner = ({ assessments, preview }: PreparedView) => `<div cl
 const overviewAccountsInner = ({ state }: PreparedView) => `<div class="card-head"><h2>Konten &amp; Limits</h2><button data-view="accounts">Details</button></div>${state.accounts.length ? state.accounts.map(renderAccountSummary).join("") : `<p class="empty">Noch kein Konto verbunden</p>`}`
 const accountsInner = ({ state }: PreparedView) => `${renderOpenRouterSection(state.accounts,state.openRouterManagement)}${renderProviderSection("opencode-zen",state.accounts)}${renderProviderSection("opencode-go",state.accounts)}`
 
-export type FragmentId = "metrics" | "attention" | "insight" | "overview-ranks" | "overview-agents" | "overview-accounts" | "models" | "agents" | "accounts" | "history"
+export type FragmentId = "metrics" | "attention" | "insight" | "overview-ranks" | "overview-agents" | "overview-accounts" | "overview-history" | "models" | "agents" | "accounts" | "history"
 
 export function fragments(state: DashboardState): Record<FragmentId, string> {
   const view = prepare(state)
@@ -42,6 +42,7 @@ export function fragments(state: DashboardState): Record<FragmentId, string> {
     "overview-ranks": ranksInner(view),
     "overview-agents": overviewAgentsInner(view),
     "overview-accounts": overviewAccountsInner(view),
+    "overview-history": renderHistoryCard(state.history),
     models: modelRows(view.offers),
     agents: renderAgentGroups(view.assessments),
     accounts: accountsInner(view),
@@ -55,7 +56,7 @@ export function panelHtml(state: DashboardState): string {
   // widersinnig, wo alles gebuendelt werden soll.
   const nonce = randomBytes(16).toString("base64"), view = prepare(state)
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview">Preis-Watch</button><nav><button data-view="overview" class="active">Übersicht</button><button data-view="models">Modelle</button><button data-view="agents">Agenten</button><button data-view="history">Verlauf</button><button data-view="accounts">Konten &amp; Limits</button></nav><span class="live"><i></i>aktuell</span></header><main>
-  <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention">${renderAttention(state.attention)}</div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section></div></section>
+  <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention">${renderAttention(state.attention)}</div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section><section class="card history-card" data-fragment="overview-history">${renderHistoryCard(state.history)}</section></div></section>
   <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${view.offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div class="table-wrap"><table><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>Fähigkeiten</th><th>Benchmark</th></tr></thead><tbody data-fragment="models">${modelRows(view.offers)}</tbody></table></div></section>
   <section class="view" id="agents" hidden><div class="page-head"><div><h1>Deine Agenten</h1><p>Nach Handlungsbedarf und Qualität geordnet</p></div></div><div class="agent-groups" data-fragment="agents">${renderAgentGroups(view.assessments)}</div></section>
   <section class="view" id="history" hidden><div class="page-head"><div><h1>Preisverlauf</h1><p>Änderungen der letzten 90 Tage</p></div></div>${historyFilters()}<div class="change-rows" data-fragment="history">${historyRows(state.history)}</div></section>

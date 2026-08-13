@@ -1,13 +1,20 @@
 import type { AttentionItem } from "../../domain/attention"
+import type { PriceChange } from "../../domain/changes"
 import type { ModelOffer } from "../../domain/model"
 import { rankOffers, type Purpose } from "../../domain/ranking"
 import { esc, money } from "../format"
+import { historyRows } from "./history"
 import { labels, purposeIcon } from "./models"
 
 /** Leer heisst leer: kein „alles in Ordnung"-Streifen, der nur Platz kostet. */
 export function renderAttention(items: AttentionItem[] = []): string {
   if (!items.length) return ""
   return items.map((item) => `<button class="attention-item ${item.severity}" data-view="${item.view}">${esc(item.text)}</button>`).join("")
+}
+
+/** Dasselbe Muster wie bei Agenten und Konten: Anriss plus Sprung in die Ansicht. */
+export function renderHistoryCard(history: PriceChange[]): string {
+  return `<div class="card-head"><h2>Preisverlauf</h2><button data-view="history">Alle ${history.length}</button></div>${history.length ? `<div class="change-rows change-preview">${historyRows(history.slice(0, 3))}</div>` : `<p class="empty">Noch keine Preisänderungen</p>`}`
 }
 
 export function renderRanks(offers: ModelOffer[]): string {

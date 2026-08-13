@@ -3,7 +3,8 @@ import { panelHtml } from "../src/panel/index"
 
 test("renders safe responsive four-view dashboard", () => {
   const html = panelHtml({ snapshots: [], history: [], agents: [{ name: "reviewer", description: "Review", model: "openrouter/x", tools: [], prompt: "local only" }], accounts: [], ai: null, updatedAt: 0 })
-  expect(html).toContain("minmax(360px,2fr) minmax(220px,1fr) minmax(220px,1fr)")
+  // Vier gleichwertige Karten: keiner der vier Zwecke wird hervorgehoben.
+  expect(html).toContain("repeat(auto-fit,minmax(240px,1fr))")
   expect(html).toContain("data-view=\"models\"")
   expect(html).toContain("Konten &amp; Limits")
   expect(html).toContain("Reasoning")

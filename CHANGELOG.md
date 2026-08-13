@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 – 2026-08-13
+
+- Zeigt oben in der Übersicht, was Aufmerksamkeit braucht: leeres Guthaben, Agenten auf abgekündigten Modellen, deutliche Preissprünge, Probleme beim Abruf. Ein Klick springt in die zuständige Ansicht. Ist nichts zu tun, bleibt die Zeile leer.
+- Ergänzt eine Verlaufsansicht: Die Preisänderungen der letzten 90 Tage wurden bisher erhoben und zwischen Geräten synchronisiert, aber nie angezeigt — sichtbar war nur ihre Anzahl.
+- Behält Filter, Scrollposition, gewählte Ansicht und aufgeklappte Bereiche beim stündlichen Abruf: Das Panel wird nicht mehr neu geladen, sondern tauscht nur die Teile, deren Inhalt sich geändert hat.
+- Stellt die Übersicht auf vier gleichwertige Karten um; keiner der vier Zwecke wird mehr hervorgehoben.
+- Neue Einstellung `priceWatch.priceJumpPercent` (Vorgabe 20) für die Schwelle, ab der ein Preissprung gemeldet wird.
+- Entfernt den Agentenstatus „Teuer": Er war deklariert und beschriftet, wurde aber nie vergeben.
+
 ## 0.2.5 – 2026-08-13
 
 - Zeigt gestufte Preise vollständig: Elf Modelle kosten oberhalb einer Kontextschwelle mehr — GPT 5.6 Sol $10 statt $5, Grok 4.6 $4 statt $2. Bisher war nur die günstige Stufe sichtbar, und die Ranglisten sortierten danach.
