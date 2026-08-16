@@ -12,7 +12,7 @@ test("missing provider usage is unavailable, never zero", () => {
 
 test("connected OpenRouter account without a key limit is described concretely", () => {
   const account = parseOpenRouterKeyStatus({ data: { label: "sk-or-v1-example", limit: null, limit_remaining: null, usage_daily: 1.25, usage_weekly: 5.5, usage_monthly: 12 } })
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [account], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [account], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("Verbunden · kein festes Schlüssellimit")
   expect(html).toContain("Heute 1,25 $")
   expect(html).not.toContain(">Unklar<")

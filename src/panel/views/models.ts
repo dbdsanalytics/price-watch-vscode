@@ -1,4 +1,4 @@
-import { isFreePricing, type ModelOffer } from "../../domain/model"
+import { isFreePricing, offerKey, type ModelOffer } from "../../domain/model"
 import type { Purpose } from "../../domain/ranking"
 import { amount, count, esc, money } from "../format"
 
@@ -72,16 +72,35 @@ export function benchmarkCell(offer: ModelOffer): string {
   return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${valuesBlock}</div>${details?`<details class="benchmark-details" data-key="bench-${esc(offer.id)}"><summary>${esc(scores.details?.length)} Einzelbenchmarks</summary>${details}</details>`:""}<small>${provenance}</small></div>`
 }
 
+// Favoriten: der Backend liefert state.favorites als Array von offerKeys
+// (provider:id, siehe offerKey in src/domain/model.ts). Zum Zeitpunkt dieser
+// Implementierung ist das Feld im DashboardState-Typ parallel noch nicht
+// gesichert — prepare() reicht es defensiv als `state.favorites ?? []` durch.
+//
+// data-favorite liegt bewusst auf dem Stern-Button (Kind der Zeile) und NICHT
+// direkt auf dem <tr>: die Panel-Tests pruefen exakte Substrings der <tr>-
+// Attributkette bis data-benchmark (z. B. 'data-benchmark="90"><td>'). Jede
+// Position eines zusaetzlichen Attributs innerhalb des <tr>-Tags wuerde diese
+// Assertionen brechen. Der Button ist Kind der Zeile, das Attribut bleibt
+// damit logisch Teil der Modellzeile und fuer applyFilter ueber
+// row.querySelector('[data-favorite="true"]') erreichbar.
+function favoriteButton(offer: ModelOffer, favorites: string[]): string {
+  const key = offerKey(offer)
+  const isFavorite = favorites.includes(key)
+  const label = isFavorite ? `${esc(offer.name)} aus Watchlist entfernen` : `${esc(offer.name)} in Watchlist aufnehmen`
+  return `<button class="favorite" data-action="toggle-favorite" data-offer-key="${esc(key)}" data-favorite="${isFavorite}" aria-label="${label}" aria-pressed="${isFavorite}">${isFavorite ? "★" : "☆"}</button>`
+}
+
 /** Der innere Inhalt von <tbody> — das Fragment, das bei Preisaenderungen tauscht. */
-export function modelRows(offers: ModelOffer[]): string {
+export function modelRows(offers: ModelOffer[], favorites: string[] = []): string {
   if (!offers.length) return `<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>`
   // Die zweite Empty-Zeile liegt verdeckt bereit und wird vom Filter im
   // Script sichtbar geschaltet, sobald keine Modellzeile mehr matched —
   // statt die Tabelle einfach leer zu lassen.
-  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer,"input")}" data-output="${priceSortValue(offer,"output")}" data-benchmark="${benchmarkSortValue(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>`
+  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer,"input")}" data-output="${priceSortValue(offer,"output")}" data-benchmark="${benchmarkSortValue(offer)}"><td>${favoriteButton(offer, favorites)}<strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>`
 }
 
 /** Die Bedienelemente liegen ausserhalb der Fragmente und ueberleben jeden Tausch. */
 export function modelFilters(): string {
-  return `<div class="filters"><input id="search" placeholder="Modelle durchsuchen" aria-label="Modelle durchsuchen"><select id="provider" aria-label="Anbieter filtern"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price" aria-label="Preis filtern"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose" aria-label="Fähigkeit filtern"><option value="">Alle Fähigkeiten</option>${Object.entries(labels).map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></div>`
+  return `<div class="filters"><input id="search" placeholder="Modelle durchsuchen" aria-label="Modelle durchsuchen"><select id="provider" aria-label="Anbieter filtern"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price" aria-label="Preis filtern"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose" aria-label="Fähigkeit filtern"><option value="">Alle Fähigkeiten</option>${Object.entries(labels).map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select><button type="button" id="favorites-only" data-testid="favorites-only" aria-pressed="false" aria-label="Nur Favoriten anzeigen">Nur Favoriten</button></div>`
 }

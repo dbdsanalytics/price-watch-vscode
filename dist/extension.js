@@ -492,6 +492,14 @@ async function loadBenchmarks(storage, key, forceRefresh, loader, now = Date.now
   }
 }
 
+// src/domain/favorites.ts
+function toggleFavorite(favorites, offerKey2) {
+  const set = new Set(favorites);
+  if (set.has(offerKey2)) set.delete(offerKey2);
+  else set.add(offerKey2);
+  return [...set].sort();
+}
+
 // src/domain/sanitize.ts
 function sanitizeErrorText(text) {
   return text.replace(/sk-[A-Za-z0-9]{16,}/g, "***").replace(/Bearer\s+[A-Za-z0-9._-]{10,}/g, "***");
@@ -518,6 +526,7 @@ const shown = {}
 const save = () => vscode.setState({
   view: [...document.querySelectorAll('.view')].find((view) => !view.hidden)?.id ?? 'overview',
   search: search.value, provider: provider.value, price: price.value, purpose: purpose.value,
+  favoritesOnly: document.getElementById('favorites-only')?.getAttribute('aria-pressed') ?? 'false',
 })
 
 const show = (id) => {
@@ -543,7 +552,16 @@ document.querySelectorAll('[data-view]').forEach((button) => button.addEventList
 // host.innerHTML = html die alten Elemente (mitsamt ihren Listenern) verwirft
 // und durch neue, ungebundene Elemente ersetzt. bindActions wird deshalb auch
 // in replaceFragment fuer den getauschten Host aufgerufen.
-const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
+//
+// offerKey-Anhang: Buttons mit data-offer-key (z. B. der Stern-Button) legen
+// den offerKey (provider:id) mit in die Nachricht, damit die Extension weiss,
+// welcher Offer gemeint ist. Buttons ohne data-offer-key senden weiter nur den
+// Typ \u2014 kein neues Verhalten. Die if/else-Form statt Spread-Syntax haelt den
+// von den Panel-Tests geprueften Substring postMessage({ type: ... }) intakt.
+const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => {
+  if (button.dataset.offerKey) vscode.postMessage({ type: button.dataset.action, offerKey: button.dataset.offerKey })
+  else vscode.postMessage({ type: button.dataset.action })
+}))
 bindActions(document)
 
 // --- Modelle-Tabelle: Filter -> Sortieren -> Paginieren ---------------------
@@ -557,7 +575,12 @@ let sortDir = 'asc'      // 'asc' | 'desc'
 
 const matchRow = (row) => {
   const q = search.value.toLowerCase(), p = provider.value, c = price.value, u = purpose.value
-  return row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u))
+  // Favoriten-Filter: nur Zeilen mit data-favorite="true" zeigen, wenn der
+  // Umschalter aktiv ist. UND-Verknuepfung mit den bestehenden Such-/Anbieter-/
+  // Preis-/F\xE4higkeitsfiltern. data-favorite liegt auf dem Stern-Button (Kind
+  // der Zeile), deshalb querySelector statt row.dataset.favorite.
+  const favOnly = document.getElementById('favorites-only')?.getAttribute('aria-pressed') === 'true'
+  return row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u)) && (!favOnly || row.querySelector('[data-favorite="true"]') !== null)
 }
 const sortValue = (row, key) => key === 'name' ? (row.dataset.name ?? '') : Number(row.dataset[key] ?? 0)
 
@@ -665,6 +688,17 @@ const scheduleFilter = () => { clearTimeout(filterTimer); filterTimer = setTimeo
 document.getElementById('search').addEventListener('input', scheduleFilter)
 ;['provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener('change', () => { page = 1; applyFilter() }))
 
+// "Nur Favoriten"-Umschalter: Klick schaltet aria-pressed um und filtert neu,
+// beginnend wieder auf Seite 1 (wie die Selects). aria-pressed ist fuer
+// Toggle-Buttons das korrekte Zustandsattribut (nicht aria-checked).
+const favToggle = document.getElementById('favorites-only')
+if (favToggle) favToggle.addEventListener('click', () => {
+  const on = favToggle.getAttribute('aria-pressed') === 'true'
+  favToggle.setAttribute('aria-pressed', on ? 'false' : 'true')
+  page = 1
+  applyFilter()
+})
+
 initSortHeaders()
 
 const applyHistoryFilter = () => {
@@ -714,6 +748,8 @@ const restore = () => {
   provider.value = saved.provider ?? ''
   price.value = saved.price ?? ''
   purpose.value = saved.purpose ?? ''
+  const favEl = document.getElementById('favorites-only')
+  if (favEl && saved.favoritesOnly === 'true') favEl.setAttribute('aria-pressed', 'true')
   applyFilter()
   if (saved.view) show(saved.view)
 }
@@ -732,6 +768,7 @@ var CSS = `
 @media(max-width:1050px){.filters{grid-template-columns:1fr 1fr}.account-metrics{grid-template-columns:1fr 1fr}.managed-key{grid-template-columns:1fr auto 1fr 1fr}.managed-key>div:last-child{display:none}.dashboard{grid-template-columns:1.6fr 1fr}}
 @media(max-width:700px){.topbar{gap:12px;overflow-x:auto}.topbar nav{gap:12px}.dashboard{grid-template-columns:1fr}.insight{display:block}.insight strong{display:block}.rank-columns,.connection-grid{grid-template-columns:1fr}.rank-columns{padding-left:0}.filters,.account-metrics{grid-template-columns:1fr}.agent-row{grid-template-columns:1fr;gap:5px}.agent-identity{justify-content:space-between}.agent-result{text-align:left}.managed-key{grid-template-columns:1fr auto}.managed-key>div{display:none}.managed-key>.key-name{display:block}.account-provider-section>header{align-items:flex-start}.account-summary{display:block}.account-summary .status{display:block;max-width:none;margin-top:4px;text-align:left}.managed-keys>header span{display:none}}@media(min-width:1051px){.dashboard{grid-template-columns:2fr 1fr 1fr}.dashboard .history-card{grid-column:1/-1}}
 .pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0 4px}.pagination[hidden]{display:none}.pagination span{color:var(--muted)}.pagination button:disabled{opacity:.5;cursor:default}#models thead th[data-sort]{cursor:pointer}#models thead th[data-sort]:hover{color:var(--violet)}
+#models .favorite{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:6px;padding:0;border:0;background:none;color:var(--muted);font-size:1.05em;line-height:1;cursor:pointer}#models .favorite[aria-pressed="true"]{color:var(--yellow)}#models .favorite:hover{color:var(--violet)}#models #favorites-only[aria-pressed="true"]{color:var(--yellow);border-color:var(--yellow)}
 `;
 
 // src/panel/views/models.ts
@@ -812,12 +849,18 @@ function benchmarkCell(offer) {
   const valuesBlock = values.length > 0 ? values.map(([label, value]) => `<span><b>${label}</b> ${esc(value)}</span>`).join("") : singleValues.length > 0 ? `<span><b>Einzelwerte</b></span>${singleValues.map((detail) => `<span><b>${esc(detailLabel[detail.name] ?? detail.name)}</b> ${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>`).join("")}` : "";
   return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${valuesBlock}</div>${details ? `<details class="benchmark-details" data-key="bench-${esc(offer.id)}"><summary>${esc(scores.details?.length)} Einzelbenchmarks</summary>${details}</details>` : ""}<small>${provenance}</small></div>`;
 }
-function modelRows(offers) {
+function favoriteButton(offer, favorites) {
+  const key = offerKey(offer);
+  const isFavorite = favorites.includes(key);
+  const label = isFavorite ? `${esc(offer.name)} aus Watchlist entfernen` : `${esc(offer.name)} in Watchlist aufnehmen`;
+  return `<button class="favorite" data-action="toggle-favorite" data-offer-key="${esc(key)}" data-favorite="${isFavorite}" aria-label="${label}" aria-pressed="${isFavorite}">${isFavorite ? "\u2605" : "\u2606"}</button>`;
+}
+function modelRows(offers, favorites = []) {
   if (!offers.length) return `<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>`;
-  return offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer, "input")}" data-output="${priceSortValue(offer, "output")}" data-benchmark="${benchmarkSortValue(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden \u2014 Filter anpassen</td></tr>`;
+  return offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer, "input")}" data-output="${priceSortValue(offer, "output")}" data-benchmark="${benchmarkSortValue(offer)}"><td>${favoriteButton(offer, favorites)}<strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden \u2014 Filter anpassen</td></tr>`;
 }
 function modelFilters() {
-  return `<div class="filters"><input id="search" placeholder="Modelle durchsuchen" aria-label="Modelle durchsuchen"><select id="provider" aria-label="Anbieter filtern"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price" aria-label="Preis filtern"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose" aria-label="F\xE4higkeit filtern"><option value="">Alle F\xE4higkeiten</option>${Object.entries(labels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div>`;
+  return `<div class="filters"><input id="search" placeholder="Modelle durchsuchen" aria-label="Modelle durchsuchen"><select id="provider" aria-label="Anbieter filtern"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price" aria-label="Preis filtern"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose" aria-label="F\xE4higkeit filtern"><option value="">Alle F\xE4higkeiten</option>${Object.entries(labels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select><button type="button" id="favorites-only" data-testid="favorites-only" aria-pressed="false" aria-label="Nur Favoriten anzeigen">Nur Favoriten</button></div>`;
 }
 
 // src/panel/views/agents.ts
@@ -924,7 +967,8 @@ function renderRanks(offers) {
 function prepare(state2) {
   const offers = state2.snapshots.flatMap((snapshot) => snapshot.offers);
   const assessments = state2.agents.map((agent) => assessAgent(agent, offers));
-  return { state: state2, offers, free: offers.filter((offer) => isFreePricing(offer.pricing)).length, assessments, preview: assessments.slice(0, 4) };
+  const favorites = state2.favorites ?? [];
+  return { state: state2, offers, free: offers.filter((offer) => isFreePricing(offer.pricing)).length, assessments, preview: assessments.slice(0, 4), favorites };
 }
 var metricsInner = ({ state: state2, offers, free }) => `<span><strong>${offers.length}</strong>Modelle</span><span><strong>${free}</strong>kostenlos</span><button class="metric-link" data-view="history" aria-label="Alle ${state2.history.length} \xC4nderungen im Verlauf \xF6ffnen"><strong>${state2.history.length}</strong>\xC4nderungen</button><span><strong>${state2.agents.length}</strong>Agenten</span>`;
 var insightInner = ({ state: state2 }) => `<strong>\u2726 KI-Fazit</strong><span>${esc(state2.ai?.text ?? "Preis- und Agentendaten werden lokal ausgewertet.")}</span>`;
@@ -961,7 +1005,7 @@ function fragments(state2) {
     "overview-agents": overviewAgentsInner(view),
     "overview-accounts": overviewAccountsInner(view),
     "overview-history": renderHistoryCard(state2.history),
-    models: modelRows(view.offers),
+    models: modelRows(view.offers, view.favorites),
     agents: renderAgentGroups(view.assessments),
     accounts: accountsInner(view),
     history: historyRows(state2.history),
@@ -972,7 +1016,7 @@ function panelHtml(state2) {
   const nonce = (0, import_crypto.randomBytes)(16).toString("base64"), view = prepare(state2);
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview" aria-label="Preis-Watch \xDCbersicht">Preis-Watch</button><nav role="navigation" aria-label="Ansichten"><button data-view="overview" class="active" aria-current="page" aria-label="\xDCbersicht">\xDCbersicht</button><button data-view="models" aria-label="Modelle">Modelle</button><button data-view="agents" aria-label="Agenten">Agenten</button><button data-view="history" aria-label="Verlauf">Verlauf</button><button data-view="accounts" aria-label="Konten und Limits">Konten &amp; Limits</button></nav><span class="live-slot" data-fragment="live" role="status">${liveInner(view)}</span></header><main role="main">
   <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention">${renderAttention(state2.attention)}</div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section><section class="card history-card" data-fragment="overview-history">${renderHistoryCard(state2.history)}</section></div></section>
-  <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${view.offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div class="table-wrap"><table aria-label="Modelle mit Preisen, F\xE4higkeiten und Benchmarks"><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th><th>Benchmark</th></tr></thead><tbody data-fragment="models">${modelRows(view.offers)}</tbody></table></div></section>
+  <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${view.offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div class="table-wrap"><table aria-label="Modelle mit Preisen, F\xE4higkeiten und Benchmarks"><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th><th>Benchmark</th></tr></thead><tbody data-fragment="models">${modelRows(view.offers, view.favorites)}</tbody></table></div></section>
   <section class="view" id="agents" hidden><div class="page-head"><div><h1>Deine Agenten</h1><p>Nach Handlungsbedarf und Qualit\xE4t geordnet</p></div></div><div class="agent-groups" data-fragment="agents">${renderAgentGroups(view.assessments)}</div></section>
   <section class="view" id="history" hidden><div class="page-head"><div><h1>Preisverlauf</h1><p>\xC4nderungen der letzten 90 Tage</p></div></div>${historyFilters()}<div class="change-rows" data-fragment="history">${historyRows(state2.history)}</div></section>
   <section class="view" id="accounts" hidden><div class="page-head"><div><h1>Konten &amp; Limits</h1><p>Secrets bleiben ausschlie\xDFlich im lokalen VS Code Secret Store.</p></div></div><div class="provider-sections" data-fragment="accounts">${accountsInner(view)}</div></section></main><script nonce="${nonce}">${SCRIPT}</script></body></html>`;
@@ -1243,11 +1287,12 @@ var GO_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/
 var HISTORY_KEY = "priceWatch.history.v3";
 var SNAPSHOT_KEY = "priceWatch.snapshots.v3";
 var AI_LAST_RUN_KEY = "priceWatch.aiLastRun.v1";
+var FAVORITES_KEY = "priceWatch.favorites";
 var secretKey = (provider) => `priceWatch.account.${provider}`;
 var panel;
 var statusBar;
 var running;
-var state = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 };
+var state = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] };
 var lastPriceAlertIds = "";
 var lastBalanceAlertKey = "";
 function localAgents() {
@@ -1457,7 +1502,8 @@ async function activate(context) {
   await migrateLegacyState(context.globalState, { historyKey: HISTORY_KEY, snapshotKey: SNAPSHOT_KEY, aiLastRunKey: AI_LAST_RUN_KEY });
   state.history = context.globalState.get(HISTORY_KEY) ?? [];
   state.snapshots = context.globalState.get(SNAPSHOT_KEY) ?? [];
-  context.globalState.setKeysForSync([HISTORY_KEY]);
+  state.favorites = context.globalState.get(FAVORITES_KEY) ?? [];
+  context.globalState.setKeysForSync([HISTORY_KEY, FAVORITES_KEY]);
   await refreshConnectedAccounts(context);
   recomputeAttention();
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -1472,6 +1518,11 @@ async function activate(context) {
         if (message?.type === "disconnect") void disconnectAccount(context);
         if (message?.type === "connect-management") void connectOpenRouterManagement(context);
         if (message?.type === "disconnect-management") void disconnectOpenRouterManagement(context);
+        if (message?.type === "toggle-favorite" && typeof message.offerKey === "string") {
+          state.favorites = toggleFavorite(state.favorites, message.offerKey);
+          void context.globalState.update(FAVORITES_KEY, state.favorites);
+          refreshPanel();
+        }
         if (message?.type === "ready") refreshPanel();
       });
       buildPanel();

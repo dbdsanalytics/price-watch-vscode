@@ -5,7 +5,7 @@ import type { ModelOffer } from "../src/domain/model"
 
 const offer = (id: string, input: number): ModelOffer => ({ provider: "opencode-zen", id, name: id, pricing: { input, output: input },
   capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: null, purposes: ["coding"] } })
-const state = (offers: ModelOffer[]): DashboardState => ({ snapshots: [{ provider: "opencode-zen", offers, checkedAt: 1, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+const state = (offers: ModelOffer[]): DashboardState => ({ snapshots: [{ provider: "opencode-zen", offers, checkedAt: 1, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
 
 test("liefert jede Kennung, die im Dokument einen Container hat", () => {
   const html = panelHtml(state([offer("a", 1)]))

@@ -3,7 +3,7 @@ import { fragments, panelHtml } from "../src/panel/index"
 import { modelRows } from "../src/panel/views/models"
 
 test("renders safe responsive four-view dashboard", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [{ name: "reviewer", description: "Review", model: "openrouter/x", tools: [], prompt: "local only" }], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [{ name: "reviewer", description: "Review", model: "openrouter/x", tools: [], prompt: "local only" }], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // Vier gleichwertige Karten: keiner der vier Zwecke wird hervorgehoben.
   expect(html).toContain("repeat(auto-fit,minmax(240px,1fr))")
   expect(html).toContain("data-view=\"models\"")
@@ -39,7 +39,7 @@ function mediaBlock(html: string, query: string): string {
 }
 
 test("stuft das Dashboard ueber die MediaQueries ab", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // Wide (ab 1051px): drei Spalten, die Verlaufskarte liegt in der eigenen Bahn.
   expect(mediaBlock(html, "min-width:1051px")).toContain(".dashboard{grid-template-columns:2fr 1fr 1fr}")
   expect(mediaBlock(html, "min-width:1051px")).toContain(".dashboard .history-card{grid-column:1/-1}")
@@ -58,7 +58,7 @@ test("renders a semantic color system and structured agent and account sections"
   const html = panelHtml({
     snapshots: [{ provider: "openrouter", checkedAt: 1, stale: false, offers: [offer("openrouter","free-code",0,["coding","tools"]), offer("openrouter","paid-reason",1,["language","reasoning","vision","allround"])] }, { provider: "opencode-zen", checkedAt: 1, stale: false, offers: [offer("opencode-zen","zen",1,["language"])] }, { provider: "opencode-go", checkedAt: 1, stale: false, offers: [offer("opencode-go","go",1,["coding"])] }],
     history: [], agents: [{ name: "good", description: "Coding", model: "openrouter/free-code", tools: [], prompt: "local" }, { name: "missing", description: "Unknown", model: "", tools: [], prompt: "local" }], accounts: [],
-    openRouterManagement: { state: "available", totalCreditsUsd: 100, totalUsageUsd: 25, remainingCreditsUsd: 75, keys: [{ hash: "abc", name: "Coding key", state: "active", reset: "monthly", usageUsd: 10, dailyUsd: 1, weeklyUsd: 4, monthlyUsd: 10 }] }, ai: null, updatedAt: 0,
+    openRouterManagement: { state: "available", totalCreditsUsd: 100, totalUsageUsd: 25, remainingCreditsUsd: 75, keys: [{ hash: "abc", name: "Coding key", state: "active", reset: "monthly", usageUsd: 10, dailyUsd: 1, weeklyUsd: 4, monthlyUsd: 10 }] }, ai: null, updatedAt: 0, favorites: [],
   })
   for (const token of ["purpose-coding","purpose-language","purpose-reasoning","purpose-vision","purpose-tools","purpose-allround","provider-openrouter","provider-opencode-zen","provider-opencode-go","price-free","price-paid"]) expect(html).toContain(token)
   expect(html).toContain("agent-group-suitable")
@@ -78,7 +78,7 @@ test("renders a semantic color system and structured agent and account sections"
 })
 
 test("zeigt Kontingentangaben ohne Dollarwert statt der generischen Zeile", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [{ provider: "opencode-go", state: "exhausted", message: "5 Std 0 % · Woche 100 % · Monat 50 %", resetAt: "2026-08-17T00:00:00.099Z" }], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [{ provider: "opencode-go", state: "exhausted", message: "5 Std 0 % · Woche 100 % · Monat 50 %", resetAt: "2026-08-17T00:00:00.099Z" }], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("Woche 100 %")
   expect(html).toContain("Reset")
   expect(html).not.toContain("kein festes Schlüssellimit")
@@ -90,21 +90,21 @@ test("zeigt Kontingentangaben ohne Dollarwert statt der generischen Zeile", () =
 // Seit Etappe 2 fuehrt der Weg ueber collectAttention: die Domain-Funktion
 // erzeugt den Eintrag (siehe attention.test.ts), das Panel stellt ihn dar.
 test("meldet einen Fehler der Verarbeitung sichtbar im Panel", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, refreshError: "Speichern fehlgeschlagen",
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [], refreshError: "Speichern fehlgeschlagen",
     attention: [{ kind: "data", severity: "warn", text: "Aktualisierung fehlgeschlagen: Speichern fehlgeschlagen", view: "models" }] })
   expect(html).toContain("Speichern fehlgeschlagen")
   expect(html).toContain("attention-item warn")
 })
 
 test("zeigt keine Fehlerzeile, wenn die Aktualisierung durchlief", () => {
-  expect(panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })).not.toContain("notice error")
+  expect(panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })).not.toContain("notice error")
 })
 
 test("beschriftet Arena-Kategorien und zeigt die ELO-Wertung", () => {
   const offer: any = { provider: "openrouter", id: "z-ai/glm-5.2", name: "GLM 5.2", pricing: { input: 0.49, output: 1.54 },
     capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: 1000, purposes: ["coding"] },
     benchmarks: { source: "OpenRouter Benchmarks", match: "direct", details: [{ name: "arena_website", score: 59.6, elo: 1332, sampleCount: 4487 }] } }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("Arena · Website")
   expect(html).not.toContain("arena_website")
   expect(html).toContain("ELO 1332")
@@ -114,7 +114,7 @@ test("zeigt bei Go-Modellen das Kontingent statt nur den Token-Preis", () => {
   const go: any = { provider: "opencode-go", id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", pricing: { input: 0.14, output: 0.28 },
     capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: false, reasoning: true, contextLength: 1000, purposes: ["coding"] },
     quota: { requestsPerMonth: 158_150, includedUsdPerMonth: 60 } }
-  const html = panelHtml({ snapshots: [{ provider: "opencode-go", offers: [go], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "opencode-go", offers: [go], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("158.150 Anfragen/Monat")
   expect(html).toContain("enthalten")
 })
@@ -126,7 +126,7 @@ test("zeigt bei Go-Modellen das Kontingent statt nur den Token-Preis", () => {
 test("maskiert auch einfache Anfuehrungszeichen", () => {
   const offer: any = { provider: "openrouter", id: "x'y", name: "Modell 'Alpha'", pricing: { input: 1, output: 2 },
     capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1, purposes: ["coding"] } }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).not.toContain("Modell 'Alpha'")
   expect(html).toContain("&#39;")
 })
@@ -136,7 +136,7 @@ test("laesst kein Markup aus Zahlenfeldern der API durch", () => {
     capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1, purposes: ["coding"] },
     benchmarks: { source: "s", match: "direct", intelligence: "<img src=x onerror=alert(1)>" as any,
       details: [{ name: "gpqa_diamond", score: 1, sampleCount: "<b>roh</b>" as any, elo: "<i>roh</i>" as any }] } }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).not.toContain("<img src=x")
   expect(html).not.toContain("<b>roh</b>")
   expect(html).not.toContain("<i>roh</i>")
@@ -149,7 +149,7 @@ const tiered = {
 }
 
 test("zeigt bei gestuften Preisen die Spanne und die Schwellen", () => {
-  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("5–10 $")
   expect(html).toContain("30–45 $")
   expect(html).toContain("&gt; 272K tokens")
@@ -160,14 +160,14 @@ test("zeigt bei gestuften Preisen die Spanne und die Schwellen", () => {
 // Modell unvergleichbar — das muss dastehen, statt stumm zu fehlen.
 test("benennt ein fehlendes Anfragenkontingent", () => {
   const ohne = { ...tiered, provider: "opencode-go" as const, id: "minimax-m2.5", name: "MiniMax M2.5", pricing: { input: 0.3, output: 1.2 }, quota: { includedUsdPerMonth: 60 } }
-  const html = panelHtml({ snapshots: [{ provider: "opencode-go", checkedAt: 1, stale: false, offers: [ohne] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "opencode-go", checkedAt: 1, stale: false, offers: [ohne] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("Anfragen nicht in der Quelle")
 })
 
 // Warnung und Hinweis muessen sich optisch unterscheiden: das eine verlangt
 // eine Reaktion, das andere ist ein Angebot.
 test("unterscheidet Warnung und Hinweis in der Kopfzeile", () => {
-  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0,
+  const html = panelHtml({ snapshots: [{ provider: "opencode-zen", checkedAt: 1, stale: false, offers: [tiered] }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [],
     attention: [{ kind: "data", severity: "warn", text: "Nur 42 statt zuletzt 61 Modelle gelesen", view: "models" },
       { kind: "price", severity: "info", text: "3 deutliche Preisänderungen", view: "history" }] })
   expect(html).toContain("Nur 42 statt zuletzt 61 Modelle gelesen")
@@ -176,7 +176,7 @@ test("unterscheidet Warnung und Hinweis in der Kopfzeile", () => {
 })
 
 test("zeigt Handlungsbedarf als anklickbare Kopfzeile", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0,
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [],
     attention: [{ kind: "account", severity: "warn", text: "openrouter: Guthaben wird knapp", view: "accounts" }] })
   expect(html).toContain("openrouter: Guthaben wird knapp")
   expect(html).toContain('class="attention-item warn"')
@@ -187,7 +187,7 @@ test("zeigt Handlungsbedarf als anklickbare Kopfzeile", () => {
 // widersinnig, die Handlungsbedarf buendeln soll.
 test("zeigt Anbieterfehler nicht mehr als eigenen Streifen", () => {
   const html = panelHtml({ snapshots: [{ provider: "opencode-zen", offers: [], checkedAt: 1, stale: true, error: { kind: "network", message: "offline" } }],
-    history: [], agents: [], accounts: [], ai: null, updatedAt: 0, refreshError: "kaputt" })
+    history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [], refreshError: "kaputt" })
   expect(html).not.toContain('class="notice error"')
   expect(html).not.toContain('class="notice warn"')
 })
@@ -198,7 +198,7 @@ test("zeigt Anbieterfehler nicht mehr als eigenen Streifen", () => {
 test("macht Navigation, Tabs, Filter und Tabellen fuer Screenreader zugaenglich und sperrt Bilder per CSP", () => {
   const offer: any = { provider: "openrouter", id: "m", name: "M", pricing: { input: 1, output: 2 },
     capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // CSP: Bilder sind komplett gesperrt — das Webview zeigt keine externen Inhalte.
   expect(html).toContain("img-src 'none'")
   // Landmarken: Navigation und Hauptbereich sind benannt.
@@ -242,7 +242,7 @@ test("zeigt bei Details ohne aggregierte Scores die drei hoechsten Einzelwerte s
       { name: "arena_asciiart", score: 44.2, sampleCount: 500 },
       { name: "arena_uicomponent", score: 31.4, sampleCount: 300 },
     ] } }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // Sichtbarer Block: Einzelwerte-Kopf und die drei hoechsten Werte mit
   // Mapping-Label und de-DE-Format (Komma, ein Nachkommawert).
   expect(html).toContain("<b>Einzelwerte</b>")
@@ -262,7 +262,7 @@ test("maskiert Benchmark-Detail-Namen auch im Einzelwerte-Block", () => {
   const offer: any = { provider: "openrouter", id: "m", name: "M", pricing: { input: 1, output: 2 },
     capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1, purposes: ["coding"] },
     benchmarks: { source: "s", match: "direct", details: [{ name: "arena_vis&<svg", score: 80 }] } }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // Namen außerhalb des Label-Mappings laufen durch esc(): & und < muessen
   // auch in der sichtbaren Pill maskiert sein, nicht nur in der Aufklappliste.
   expect(html).toContain("<b>arena_vis&amp;&lt;svg</b>")
@@ -275,7 +275,7 @@ test("zeigt Modelle mit Scores oder ganz ohne Daten den bisherigen Zustand ohne 
   const scored = { ...base, id: "s", name: "S", benchmarks: { source: "test", match: "direct", coding: 90, intelligence: 80, details: [{ name: "gpqa_diamond", score: 94.2 }] } }
   const scoredOnly = { ...base, id: "so", name: "SO", benchmarks: { source: "test", match: "direct", coding: 70 } }
   const plain = { ...base, id: "k", name: "K", benchmarks: undefined }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [scored, scoredOnly, plain], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [scored, scoredOnly, plain], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // Der Einzelwerte-Block erscheint NUR ohne Dimensions-Scores: Vorhandene
   // Scores gewinnen auch mit details, Modelle ohne Daten zeigen die Missing-Zeile.
   expect(html).toContain("<b>Coding</b> 90")
@@ -289,7 +289,7 @@ test("zeigt Modelle mit Scores oder ganz ohne Daten den bisherigen Zustand ohne 
 // Zustaende ab; das Fragment "live" wird in der Kopfzeile in den live-slot
 // gesetzt. Die Altersgrenzen: < 5 min aktuell, bis 24 h veraltet, danach Fehler.
 test("stuft das Live-Badge nach Alter und Abruf-Fehler", () => {
-  const state = (updatedAt: number, refreshError?: string) => ({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt, refreshError })
+  const state = (updatedAt: number, refreshError?: string) => ({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt, refreshError, favorites: [] })
   // Frisch (< 5 Minuten): gruene Klasse, Label "Daten aktuell", kein title.
   // role="status" liegt nicht auf dem Fragment (das wird beim Austausch
   // ersetzt), sondern auf dem stabilen live-slot-Wrapper in panelHtml.
@@ -324,7 +324,7 @@ test("stuft das Live-Badge nach Alter und Abruf-Fehler", () => {
   // panelHtml setzt das Fragment in den live-slot der Kopfzeile; der Wrapper
   // ist stabil und traegt role="status" (damit Screenreader den Austausch des
   // inneren Spans als Live-Region-Update melden).
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() - 60_000 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() - 60_000, favorites: [] })
   expect(html).toContain('<span class="live-slot" data-fragment="live" role="status"><span class="live live-live"')
 })
 
@@ -332,13 +332,13 @@ test("stuft das Live-Badge nach Alter und Abruf-Fehler", () => {
 // zurueckgestellt). Das Alter ist negativ — das Badge darf nicht "aktuell"
 // gruenen, sondern meldet den Zeitkonflikt als Fehler.
 test("stuft ein Live-Badge mit Zukunftsupdated als Zeitfehler ein", () => {
-  const future = fragments({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() + 3_600_000 }).live
+  const future = fragments({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() + 3_600_000, favorites: [] }).live
   expect(future).toContain('class="live live-error"')
   expect(future).toContain('aria-label="Zeitfehler"')
   expect(future).toContain('title="Systemzeit liegt vor dem Aktualisierungszeitpunkt"')
   expect(future).toContain(">Uhr stimmt nicht</span>")
   // Auch im vollen panelHtml landet der Zeitfehler-Zustand im live-slot.
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() + 3_600_000 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() + 3_600_000, favorites: [] })
   expect(html).toContain('<span class="live-slot" data-fragment="live" role="status"><span class="live live-error"')
 })
 
@@ -347,7 +347,7 @@ test("stuft ein Live-Badge mit Zukunftsupdated als Zeitfehler ein", () => {
 // der Filter-Empty-State gehoert deshalb nicht in diesen Fall. (Der Text
 // "data-empty-filter" steht trotzdem im Seiten-HTML: als CSS- und JS-Selektor.)
 test("zeigt bei leerem Katalog eine Empty-Zeile statt einer leeren Tabelle", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain('<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>')
   expect(html).not.toContain("Keine Modelle gefunden — Filter anpassen")
 })
@@ -358,7 +358,7 @@ test("zeigt bei leerem Katalog eine Empty-Zeile statt einer leeren Tabelle", () 
 test("legt den Filter-Empty-State verdeckt neben die Modellzeilen", () => {
   const offer: any = { provider: "openrouter", id: "m", name: "M", pricing: { input: 1, output: 2 },
     capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain('<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>')
   expect(html).not.toContain("Noch keine Angebote geladen")
   // Das Script toggelt hidden auf [data-empty-filter] bei null sichtbaren
@@ -376,7 +376,7 @@ test("legt den Filter-Empty-State verdeckt neben die Modellzeilen", () => {
 // Konstante im <style>-Block, deshalb traegt derselbe HTML-String beide
 // Zustaende (Light-Override UND Dark-Originale).
 test("legt fuer helle VS-Code-Designs kontrastreiche Akzentfarben ueber die Dark-Werte", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // (a) Light-Override: beide Selektor-Regeln mit allen drei Hexwerten.
   expect(html).toContain("body.vscode-light,body.vscode-high-contrast-light{--violet:#7c3aed;--green:#15803d;--allround:#475569}")
   expect(html).toContain("body.vscode-light .insight strong,body.vscode-high-contrast-light .insight strong{color:var(--violet)}")
@@ -405,7 +405,7 @@ test("legt fuer helle VS-Code-Designs kontrastreiche Akzentfarben ueber die Dark
 // der im CSS/JS-Text des panelHtml ohnehin unschaerfe wäre).
 test("zeigt bei verbundenen Konten je einen Trennen-Button mit aria-label", () => {
   const html = panelHtml({
-    snapshots: [], history: [], agents: [], ai: null, updatedAt: 0,
+    snapshots: [], history: [], agents: [], ai: null, updatedAt: 0, favorites: [],
     accounts: [
       { provider: "openrouter", state: "available", remainingUsd: 5, dailyUsd: 1, weeklyUsd: 4, monthlyUsd: 10 },
       { provider: "opencode-zen", state: "available", message: "Verbunden" },
@@ -425,7 +425,7 @@ test("zeigt bei verbundenen Konten je einen Trennen-Button mit aria-label", () =
 // Trennen-Button tragen. Dieser Test schlaegt fehl, sobald die Buttons
 // unkonditional gerendert wuerden.
 test("zeigt bei nicht verbundenen Konten keinen Trennen-Button", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).not.toContain('<button data-action="disconnect"')
   expect(html).not.toContain('<button data-action="disconnect-management"')
   // Der Connect-Button bleibt der einzige Weg — er heisst weiterhin "verbinden".
@@ -439,7 +439,7 @@ test("zeigt bei nicht verbundenen Konten keinen Trennen-Button", () => {
 // verwirft. Vorher blieben die Buttons nach dem Fragment-Tausch stumm.
 // Geprueft auf dem eingebetteten SCRIPT-Text des vollen panelHtml.
 test("bindet [data-action]-Buttons initial und nach jedem Fragment-Tausch neu", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // Definition: bindActions klickt genau den [data-action]-Wert als Nachricht.
   expect(html).toContain("const bindActions = (root) => root.querySelectorAll('[data-action]')")
   expect(html).toContain("vscode.postMessage({ type: button.dataset.action })")
@@ -465,7 +465,7 @@ test("markiert Modellzeilen mit den Sortier-Daten name, input, output und benchm
   const rows = modelRows([offer])
   expect(rows).toContain('<tr data-model="alpha openrouter coding" data-name="Alpha" data-provider="openrouter" data-price="paid" data-input="1.5" data-output="3" data-benchmark="90"><td>')
   // Derselbe Renderpfad im vollen panelHtml (das Fragment wird dort eingebettet).
-  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain('data-name="Alpha" data-provider="openrouter" data-price="paid" data-input="1.5" data-output="3" data-benchmark="90">')
   // Ohne aggregierte Scores liefert das hoechste Einzel-Benchmark den Sortierwert.
   const detailsOnly: any = { provider: "openrouter", id: "d", name: "Details", pricing: { input: 0.5, output: 1 },
@@ -490,7 +490,7 @@ test("legt unbekannte Preise und fehlende Benchmarks ans Ende der Sortierwerte",
 // der Seitenzahler ist eine aria-live-Region, die Blätter-Buttons tragen
 // aria-Labels und sind an den Raendern deaktiviert.
 test("bettet Pagination mit Seitenzahler, aria-live und Rand-Disabling ins Skript ein", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("const PAGE_SIZE = 100")
   // Seitenberechnung und Sichtbarkeitsfenster der Seite.
   expect(html).toContain("pages = Math.max(1, Math.ceil(visible / PAGE_SIZE))")
@@ -512,7 +512,7 @@ test("bettet Pagination mit Seitenzahler, aria-live und Rand-Disabling ins Skrip
 // Debounce: ein input-Event pro Tastendruck iteriert sonst bei hunderten Zeilen
 // — 150 ms Pause, und jeder neue Filterlauf startet wieder auf Seite 1.
 test("entprellt die Suche mit 150ms und startet Filter- und Change-Wechsel auf Seite 1", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain("clearTimeout(filterTimer); filterTimer = setTimeout(() => { page = 1; applyFilter() }, 150)")
   // Nur die Suche laeuft ueber den Debounce; die Selects filtern sofort.
   expect(html).toContain("document.getElementById('search').addEventListener('input', scheduleFilter)")
@@ -523,7 +523,7 @@ test("entprellt die Suche mit 150ms und startet Filter- und Change-Wechsel auf S
 // absteigend, zurueck zur Default-Name-Sortierung), aria-sort-Pflege und
 // Tastaturbedienung. Jeder Sortierwechsel beginnt wieder auf Seite 1.
 test("sortiert ueber drei Stufen mit aria-sort und Tastatur, immer zurueck auf Seite 1", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   // Spaltenwahl: Modell(0), Input(2), Output(3), Benchmark(5).
   expect(html).toContain("const SORT_COLUMNS = [['name', 0], ['input', 2], ['output', 3], ['benchmark', 5]]")
   expect(html).toContain("th.setAttribute('data-sort', key)")
@@ -546,10 +546,88 @@ test("sortiert ueber drei Stufen mit aria-sort und Tastatur, immer zurueck auf S
 // Runde 5: minimales Layout fuer die Blaetterleiste und Der Cursor auf den
 // sortierbaren Kopfzeilen — von außen sichtbare Zeichen der neuen Steuerung.
 test("gestaltet Seitenleiste und sortierbare Kopfzeilen", () => {
-  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
   expect(html).toContain(".pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0 4px}")
   expect(html).toContain(".pagination[hidden]{display:none}")
   expect(html).toContain(".pagination button:disabled{opacity:.5;cursor:default}")
   expect(html).toContain("#models thead th[data-sort]{cursor:pointer}")
   expect(html).toContain("#models thead th[data-sort]:hover{color:var(--violet)}")
+})
+
+// Runde 7: Der Stern-Button einer Modellzeile spiegelt den Zustand der
+// Watchlist. Favorisiert: aria-pressed="true" und gefuellter Stern ★, Label
+// "aus Watchlist entfernen". Nicht favorisiert: aria-pressed="false", hohler
+// Stern ☆, Label "in Watchlist aufnehmen". data-offer-key traegt exakt den
+// offerKey (provider:id) — die Extension togglet damit state.favorites.
+test("rendert den Stern-Button einer Modellzeile nach dem Favoritenstatus", () => {
+  const offer: any = { provider: "openrouter", id: "m", name: "M", pricing: { input: 1, output: 2 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
+  // Favorisiert: der exakte Button-String aus dem modelRows-Fragment.
+  const favorite = modelRows([offer], ["openrouter:m"])
+  expect(favorite).toContain('<button class="favorite" data-action="toggle-favorite" data-offer-key="openrouter:m" data-favorite="true"')
+  expect(favorite).toContain('aria-label="M aus Watchlist entfernen" aria-pressed="true">★</button>')
+  // Nicht favorisiert: Press-Zustand false und das Aufnehmen-Label.
+  const plain = modelRows([offer])
+  expect(plain).toContain('<button class="favorite" data-action="toggle-favorite" data-offer-key="openrouter:m" data-favorite="false"')
+  expect(plain).toContain('aria-label="M in Watchlist aufnehmen" aria-pressed="false">☆</button>')
+  // Derselbe Renderpfad im vollen panelHtml: state.favorites (nicht der
+  // Default) entscheidet. Beide Zustaende koexistieren im selben Dokument,
+  // wenn zwei Modellzeilen unterschiedlich favorisiert sind.
+  const second: any = { provider: "opencode-zen", id: "z", name: "Z", pricing: { input: 1, output: 2 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }, { provider: "opencode-zen", offers: [second], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: ["openrouter:m"] })
+  expect(html).toContain('data-offer-key="openrouter:m" data-favorite="true" aria-label="M aus Watchlist entfernen" aria-pressed="true">★')
+  expect(html).toContain('data-offer-key="opencode-zen:z" data-favorite="false" aria-label="Z in Watchlist aufnehmen" aria-pressed="false">☆')
+})
+
+// Runde 7: Der "Nur Favoriten"-Umschalter liegt in der Filterleiste, ist ein
+// Toggle-Button (aria-pressed, nicht aria-checked) und startet beim Klick
+// wieder auf Seite 1. aria-pressed wird per setAttribute umgeschaltet — der
+// Zustand fuehrt durch applyFilter in die UND-Verknuepfung der Zeilen.
+test("bettet den Nur-Favoriten-Umschalter mit Toggle- und Seitenlogik ins Skript ein", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
+  // Exakter Button-String: id und data-testid, initial aus (aria-pressed="false").
+  expect(html).toContain('<button type="button" id="favorites-only" data-testid="favorites-only" aria-pressed="false" aria-label="Nur Favoriten anzeigen">Nur Favoriten</button>')
+  // Klick: aria-pressed umschalten und ab Seite 1 neu filtern.
+  expect(html).toContain("favToggle.setAttribute('aria-pressed', on ? 'false' : 'true')")
+  expect(html).toContain("if (favToggle) favToggle.addEventListener('click', () => {")
+  // Der Toggle-Zustand ueberlebt Persistenz und Reload ueber setState/getState.
+  expect(html).toContain("favoritesOnly: document.getElementById('favorites-only')?.getAttribute('aria-pressed') ?? 'false'")
+  expect(html).toContain("if (favEl && saved.favoritesOnly === 'true') favEl.setAttribute('aria-pressed', 'true')")
+})
+
+// Runde 7: Der Favoritenfilter ist keine eigene Sicht, sondern die UND-
+// Verknuepfung mit den bestehenden Filtern: Nur Zeilen mit
+// data-favorite="true" (der Stern-Button ist Kind der Zeile, deshalb
+// querySelector statt row.dataset) bleiben sichtbar, wenn aria-pressed auf
+// true steht. Anbieter/Preis/Faehigkeit/Suche wirken weiterhin.
+test("verknuepft den Favoritenfilter per UND mit den bestehenden Zeilenfiltern", () => {
+  // Ein Modell ohne Benchmarks, damit die Zeilenoefnung mit dem
+  // SORT_UNKNOWN-Wert endet und direkt in den Stern-Button des ersten <td>.
+  const offer: any = { provider: "openrouter", id: "m", name: "M", pricing: { input: 1, output: 2 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
+  // favOnly liest denselben aria-pressed-Zustand wie der Toggle-Listener.
+  expect(html).toContain("const favOnly = document.getElementById('favorites-only')?.getAttribute('aria-pressed') === 'true'")
+  // UND-Verzweigung am Ende der matchRow-Bedingung: ohne favOnly bleibt alles
+  // wie bisher, mit favOnly zaehlt nur data-favorite="true"-Zeilen.
+  expect(html).toContain("(!favOnly || row.querySelector('[data-favorite=\"true\"]') !== null)")
+  // Das Attribut liegt auf dem Stern-Button (Kind der Zeile), nicht auf dem
+  // tr: sonst bliebe der Filter immer leer. Der Button folgt unmittelbar auf
+  // die gepruefte Zeilenoefnung — das tr selbst traegt kein data-favorite.
+  expect(html).toContain('data-benchmark="1.7976931348623157e+308"><td><button class="favorite" data-action="toggle-favorite"')
+})
+
+// Runde 7: [data-action]-Buttons schicken ihren Typ als Nachricht an die
+// Extension — Buttons mit data-offer-key (der Stern) legen den offerKey
+// (provider:id) mit in die Nachricht, alle anderen senden unveraendert nur
+// den Typ. Die if/else-Form ersetzt die Spread-Variante bewusst, damit der
+// gepruefte Substring postMessage({ type: ... }) intakt bleibt.
+test("haengt den offerKey nur an Nachrichten von Buttons mit data-offer-key an", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
+  // Beide Zweige existieren direkt im else.
+  expect(html).toContain("if (button.dataset.offerKey) vscode.postMessage({ type: button.dataset.action, offerKey: button.dataset.offerKey })")
+  expect(html).toContain("else vscode.postMessage({ type: button.dataset.action })")
+  // Der bisher gepruefte Substring bleibt bestehen (Regression auf Runde 2).
+  expect(html).toContain("vscode.postMessage({ type: button.dataset.action })")
 })

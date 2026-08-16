@@ -12,6 +12,7 @@ const shown = {}
 const save = () => vscode.setState({
   view: [...document.querySelectorAll('.view')].find((view) => !view.hidden)?.id ?? 'overview',
   search: search.value, provider: provider.value, price: price.value, purpose: purpose.value,
+  favoritesOnly: document.getElementById('favorites-only')?.getAttribute('aria-pressed') ?? 'false',
 })
 
 const show = (id) => {
@@ -37,7 +38,16 @@ document.querySelectorAll('[data-view]').forEach((button) => button.addEventList
 // host.innerHTML = html die alten Elemente (mitsamt ihren Listenern) verwirft
 // und durch neue, ungebundene Elemente ersetzt. bindActions wird deshalb auch
 // in replaceFragment fuer den getauschten Host aufgerufen.
-const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
+//
+// offerKey-Anhang: Buttons mit data-offer-key (z. B. der Stern-Button) legen
+// den offerKey (provider:id) mit in die Nachricht, damit die Extension weiss,
+// welcher Offer gemeint ist. Buttons ohne data-offer-key senden weiter nur den
+// Typ — kein neues Verhalten. Die if/else-Form statt Spread-Syntax haelt den
+// von den Panel-Tests geprueften Substring postMessage({ type: ... }) intakt.
+const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => {
+  if (button.dataset.offerKey) vscode.postMessage({ type: button.dataset.action, offerKey: button.dataset.offerKey })
+  else vscode.postMessage({ type: button.dataset.action })
+}))
 bindActions(document)
 
 // --- Modelle-Tabelle: Filter -> Sortieren -> Paginieren ---------------------
@@ -51,7 +61,12 @@ let sortDir = 'asc'      // 'asc' | 'desc'
 
 const matchRow = (row) => {
   const q = search.value.toLowerCase(), p = provider.value, c = price.value, u = purpose.value
-  return row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u))
+  // Favoriten-Filter: nur Zeilen mit data-favorite="true" zeigen, wenn der
+  // Umschalter aktiv ist. UND-Verknuepfung mit den bestehenden Such-/Anbieter-/
+  // Preis-/Fähigkeitsfiltern. data-favorite liegt auf dem Stern-Button (Kind
+  // der Zeile), deshalb querySelector statt row.dataset.favorite.
+  const favOnly = document.getElementById('favorites-only')?.getAttribute('aria-pressed') === 'true'
+  return row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u)) && (!favOnly || row.querySelector('[data-favorite="true"]') !== null)
 }
 const sortValue = (row, key) => key === 'name' ? (row.dataset.name ?? '') : Number(row.dataset[key] ?? 0)
 
@@ -159,6 +174,17 @@ const scheduleFilter = () => { clearTimeout(filterTimer); filterTimer = setTimeo
 document.getElementById('search').addEventListener('input', scheduleFilter)
 ;['provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener('change', () => { page = 1; applyFilter() }))
 
+// "Nur Favoriten"-Umschalter: Klick schaltet aria-pressed um und filtert neu,
+// beginnend wieder auf Seite 1 (wie die Selects). aria-pressed ist fuer
+// Toggle-Buttons das korrekte Zustandsattribut (nicht aria-checked).
+const favToggle = document.getElementById('favorites-only')
+if (favToggle) favToggle.addEventListener('click', () => {
+  const on = favToggle.getAttribute('aria-pressed') === 'true'
+  favToggle.setAttribute('aria-pressed', on ? 'false' : 'true')
+  page = 1
+  applyFilter()
+})
+
 initSortHeaders()
 
 const applyHistoryFilter = () => {
@@ -208,6 +234,8 @@ const restore = () => {
   provider.value = saved.provider ?? ''
   price.value = saved.price ?? ''
   purpose.value = saved.purpose ?? ''
+  const favEl = document.getElementById('favorites-only')
+  if (favEl && saved.favoritesOnly === 'true') favEl.setAttribute('aria-pressed', 'true')
   applyFilter()
   if (saved.view) show(saved.view)
 }

@@ -5,4 +5,4 @@ import type { AttentionItem } from "./attention"
 import type { PriceChange } from "./changes"
 import type { ProviderSnapshot } from "./provider"
 
-export interface DashboardState { snapshots: ProviderSnapshot[]; history: PriceChange[]; agents: AgentMetadata[]; accounts: AccountStatus[]; openRouterManagement?: OpenRouterManagementStatus | null; ai: AiResult | null; updatedAt: number; refreshError?: string | null; attention?: AttentionItem[] }
+export interface DashboardState { snapshots: ProviderSnapshot[]; history: PriceChange[]; agents: AgentMetadata[]; accounts: AccountStatus[]; openRouterManagement?: OpenRouterManagementStatus | null; ai: AiResult | null; updatedAt: number; refreshError?: string | null; attention?: AttentionItem[]; favorites: string[] }

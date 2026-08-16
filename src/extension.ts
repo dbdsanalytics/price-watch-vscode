@@ -20,6 +20,7 @@ import { BENCHMARK_CACHE_KEY, loadBenchmarks } from "./domain/benchmark-cache"
 import type { ModelOffer } from "./domain/model"
 import type { ProviderSnapshot } from "./domain/provider"
 import type { DashboardState } from "./domain/dashboard"
+import { toggleFavorite } from "./domain/favorites"
 import { sanitizeErrorText } from "./domain/sanitize"
 import { fragments, panelHtml } from "./panel/index"
 import { money } from "./panel/format"
@@ -33,10 +34,10 @@ const ZEN_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packag
 const GO_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx"
 // v0.2.0 persisted invalid OpenRouter sentinel prices. Keep the corrected data
 // in a fresh namespace so those values cannot reappear after an update or sync.
-const HISTORY_KEY = "priceWatch.history.v3", SNAPSHOT_KEY = "priceWatch.snapshots.v3", AI_LAST_RUN_KEY = "priceWatch.aiLastRun.v1"
+const HISTORY_KEY = "priceWatch.history.v3", SNAPSHOT_KEY = "priceWatch.snapshots.v3", AI_LAST_RUN_KEY = "priceWatch.aiLastRun.v1", FAVORITES_KEY = "priceWatch.favorites"
 const secretKey = (provider: string) => `priceWatch.account.${provider}`
 let panel: vscode.WebviewPanel | undefined, statusBar: vscode.StatusBarItem, running: Promise<void> | undefined
-let state: DashboardState = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 }
+let state: DashboardState = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] }
 // Wiederholungssperre für Alarme: Derselbe Alarmzustand wird nur einmal
 // gemeldet. Preis-IDs wechseln nur bei neuen Diffs (unveränderte Preise
 // erzeugen keine Changes), Konten nur bei einer echten Guthabenänderung.
@@ -254,11 +255,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await migrateLegacyState(context.globalState, { historyKey: HISTORY_KEY, snapshotKey: SNAPSHOT_KEY, aiLastRunKey: AI_LAST_RUN_KEY })
   state.history = context.globalState.get<PriceChange[]>(HISTORY_KEY) ?? []
   state.snapshots = context.globalState.get<ProviderSnapshot[]>(SNAPSHOT_KEY) ?? []
-  context.globalState.setKeysForSync([HISTORY_KEY])
+  state.favorites = context.globalState.get<string[]>(FAVORITES_KEY) ?? []
+  context.globalState.setKeysForSync([HISTORY_KEY, FAVORITES_KEY])
   await refreshConnectedAccounts(context)
   recomputeAttention()
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100); statusBar.command = "priceWatch.open"; context.subscriptions.push(statusBar)
-  context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => { if (!panel) { panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }); panel.onDidDispose(()=>panel=undefined); panel.webview.onDidReceiveMessage((message)=>{ if (message?.type === "connect") void connectAccount(context); if (message?.type === "disconnect") void disconnectAccount(context); if (message?.type === "connect-management") void connectOpenRouterManagement(context); if (message?.type === "disconnect-management") void disconnectOpenRouterManagement(context); if (message?.type === "ready") refreshPanel() }); buildPanel() } else { panel.reveal(); refreshPanel() } }), vscode.commands.registerCommand("priceWatch.refresh", ()=>refresh(context,true)), vscode.commands.registerCommand("priceWatch.setKey", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.disconnectAccount", ()=>disconnectAccount(context)), vscode.commands.registerCommand("priceWatch.connectOpenRouterManagement", ()=>connectOpenRouterManagement(context)))
+  context.subscriptions.push(vscode.commands.registerCommand("priceWatch.open", () => { if (!panel) { panel = vscode.window.createWebviewPanel("priceWatch", "Preis-Watch", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true }); panel.onDidDispose(()=>panel=undefined); panel.webview.onDidReceiveMessage((message)=>{ if (message?.type === "connect") void connectAccount(context); if (message?.type === "disconnect") void disconnectAccount(context); if (message?.type === "connect-management") void connectOpenRouterManagement(context); if (message?.type === "disconnect-management") void disconnectOpenRouterManagement(context); if (message?.type === "toggle-favorite" && typeof message.offerKey === "string") { state.favorites = toggleFavorite(state.favorites, message.offerKey); void context.globalState.update(FAVORITES_KEY, state.favorites); refreshPanel() } if (message?.type === "ready") refreshPanel() }); buildPanel() } else { panel.reveal(); refreshPanel() } }), vscode.commands.registerCommand("priceWatch.refresh", ()=>refresh(context,true)), vscode.commands.registerCommand("priceWatch.setKey", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.connectAccount", ()=>connectAccount(context)), vscode.commands.registerCommand("priceWatch.disconnectAccount", ()=>disconnectAccount(context)), vscode.commands.registerCommand("priceWatch.connectOpenRouterManagement", ()=>connectOpenRouterManagement(context)))
   const hours = Math.max(1, vscode.workspace.getConfiguration("priceWatch").get<number>("checkIntervalHours",1)); const timer = setInterval(()=>void refresh(context,false),hours*3_600_000); context.subscriptions.push({ dispose:()=>clearInterval(timer) })
   updateStatus(); void refresh(context,false)
 }
