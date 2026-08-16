@@ -36,9 +36,17 @@ document.querySelectorAll('[data-action]').forEach((button) => button.addEventLi
 
 const applyFilter = () => {
   const q = search.value.toLowerCase(), p = provider.value, c = price.value, u = purpose.value
+  let visible = 0
   document.querySelectorAll('[data-model]').forEach((row) => {
-    row.hidden = !(row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u)))
+    const show = row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u))
+    row.hidden = !show
+    if (show) visible++
   })
+  // Leerer tbody sah bisher aus wie "keine Daten" — dabei war nur der Filter
+  // zu streng. Die bereitliegende Empty-Zeile wird sichtbar, sobald keine
+  // Modellzeile mehr matched, und verdeckt sonst.
+  const emptyFilter = document.querySelector('[data-empty-filter]')
+  if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = visible > 0
 }
 ;['search', 'provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener(id === 'search' ? 'input' : 'change', () => { applyFilter(); save() }))
 

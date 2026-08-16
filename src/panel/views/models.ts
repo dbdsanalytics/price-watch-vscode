@@ -59,7 +59,11 @@ export function benchmarkCell(offer: ModelOffer): string {
 
 /** Der innere Inhalt von <tbody> — das Fragment, das bei Preisaenderungen tauscht. */
 export function modelRows(offers: ModelOffer[]): string {
-  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-provider="${offer.provider}" data-price="${priceClass(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("")
+  if (!offers.length) return `<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>`
+  // Die zweite Empty-Zeile liegt verdeckt bereit und wird vom Filter im
+  // Script sichtbar geschaltet, sobald keine Modellzeile mehr matched —
+  // statt die Tabelle einfach leer zu lassen.
+  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-provider="${offer.provider}" data-price="${priceClass(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>`
 }
 
 /** Die Bedienelemente liegen ausserhalb der Fragmente und ueberleben jeden Tausch. */

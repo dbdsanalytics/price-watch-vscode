@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { panelHtml } from "../src/panel/index"
+import { fragments, panelHtml } from "../src/panel/index"
 
 test("renders safe responsive four-view dashboard", () => {
   const html = panelHtml({ snapshots: [], history: [], agents: [{ name: "reviewer", description: "Review", model: "openrouter/x", tools: [], prompt: "local only" }], accounts: [], ai: null, updatedAt: 0 })
@@ -281,4 +281,86 @@ test("zeigt Modelle mit Scores oder ganz ohne Daten den bisherigen Zustand ohne 
   expect(html).toContain("<b>Coding</b> 70")
   expect(html).toContain("Keine Daten")
   expect(html).not.toContain("<b>Einzelwerte</b>")
+})
+
+// Das Live-Badge war bisher immer gruen ("aktuell"), unabhaengig vom Alter der
+// Daten. Seit der H1-Runde stuft liveLabel aus updatedAt und refreshError vier
+// Zustaende ab; das Fragment "live" wird in der Kopfzeile in den live-slot
+// gesetzt. Die Altersgrenzen: < 5 min aktuell, bis 24 h veraltet, danach Fehler.
+test("stuft das Live-Badge nach Alter und Abruf-Fehler", () => {
+  const state = (updatedAt: number, refreshError?: string) => ({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt, refreshError })
+  // Frisch (< 5 Minuten): gruene Klasse, Label "Daten aktuell", kein title.
+  // role="status" liegt nicht auf dem Fragment (das wird beim Austausch
+  // ersetzt), sondern auf dem stabilen live-slot-Wrapper in panelHtml.
+  const fresh = fragments(state(Date.now() - 60_000)).live
+  expect(fresh).toContain('class="live live-live"')
+  expect(fresh).not.toContain("role=")
+  expect(fresh).toContain('aria-label="Daten aktuell"')
+  expect(fresh).toContain(">aktuell</span>")
+  expect(fresh).not.toContain("title=")
+  // 3 Stunden alt (5 min bis 24 h): gelbe Klasse, gerundete Stundenzahl.
+  const stale = fragments(state(Date.now() - 3 * 3_600_000)).live
+  expect(stale).toContain('class="live live-stale"')
+  expect(stale).toContain('aria-label="Daten vor 3 Stunden aktualisiert"')
+  expect(stale).toContain(">vor 3 h</span>")
+  // 26 Stunden alt (ueber 24 h): rote Klasse, "veraltet".
+  const old = fragments(state(Date.now() - 26 * 3_600_000)).live
+  expect(old).toContain('class="live live-error"')
+  expect(old).toContain('aria-label="Daten veraltet"')
+  expect(old).toContain(">veraltet</span>")
+  // Abruf-Fehler: rote Klasse, Label "Aktualisierung fehlgeschlagen" und der
+  // Fehlertext als title — auch wenn das Alter selbst frisch waere.
+  const error = fragments(state(0, "API offline")).live
+  expect(error).toContain('class="live live-error"')
+  expect(error).toContain('aria-label="Aktualisierung fehlgeschlagen"')
+  expect(error).toContain('title="API offline"')
+  expect(error).toContain(">Fehler</span>")
+  // updatedAt 0 ohne Fehler: rote Klasse, "nicht aktualisiert".
+  const never = fragments(state(0)).live
+  expect(never).toContain('class="live live-error"')
+  expect(never).toContain('aria-label="Noch nicht aktualisiert"')
+  expect(never).toContain(">nicht aktualisiert</span>")
+  // panelHtml setzt das Fragment in den live-slot der Kopfzeile; der Wrapper
+  // ist stabil und traegt role="status" (damit Screenreader den Austausch des
+  // inneren Spans als Live-Region-Update melden).
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() - 60_000 })
+  expect(html).toContain('<span class="live-slot" data-fragment="live" role="status"><span class="live live-live"')
+})
+
+// Edge-Fall Zukunft: updatedAt liegt vor der Systemzeit (z. B. Uhr wurde
+// zurueckgestellt). Das Alter ist negativ — das Badge darf nicht "aktuell"
+// gruenen, sondern meldet den Zeitkonflikt als Fehler.
+test("stuft ein Live-Badge mit Zukunftsupdated als Zeitfehler ein", () => {
+  const future = fragments({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() + 3_600_000 }).live
+  expect(future).toContain('class="live live-error"')
+  expect(future).toContain('aria-label="Zeitfehler"')
+  expect(future).toContain('title="Systemzeit liegt vor dem Aktualisierungszeitpunkt"')
+  expect(future).toContain(">Uhr stimmt nicht</span>")
+  // Auch im vollen panelHtml landet der Zeitfehler-Zustand im live-slot.
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: Date.now() + 3_600_000 })
+  expect(html).toContain('<span class="live-slot" data-fragment="live" role="status"><span class="live live-error"')
+})
+
+// Leerer Katalog: eine Empty-Zeile ueber alle sechs Spalten statt einer leeren
+// Tabelle. Ohne Modellzeilen gibt es keinen Filter, der zu streng sein koennte —
+// der Filter-Empty-State gehoert deshalb nicht in diesen Fall. (Der Text
+// "data-empty-filter" steht trotzdem im Seiten-HTML: als CSS- und JS-Selektor.)
+test("zeigt bei leerem Katalog eine Empty-Zeile statt einer leeren Tabelle", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain('<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>')
+  expect(html).not.toContain("Keine Modelle gefunden — Filter anpassen")
+})
+
+// Mit Modellzeilen liegt die Filter-Empty-Zeile verdeckt bereit (hidden) und
+// wird erst vom Script sichtbar, wenn keine [data-model]-Zeile mehr matched.
+// Im statischen HTML pruefbar ist nur diese Startbedingung plus der Toggle.
+test("legt den Filter-Empty-State verdeckt neben die Modellzeilen", () => {
+  const offer: any = { provider: "openrouter", id: "m", name: "M", pricing: { input: 1, output: 2 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain('<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>')
+  expect(html).not.toContain("Noch keine Angebote geladen")
+  // Das Script toggelt hidden auf [data-empty-filter] bei null sichtbaren
+  // [data-model]-Zeilen.
+  expect(html).toContain("emptyFilter.hidden = visible > 0")
 })
