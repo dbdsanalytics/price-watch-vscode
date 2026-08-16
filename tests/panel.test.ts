@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { fragments, panelHtml } from "../src/panel/index"
+import { modelRows } from "../src/panel/views/models"
 
 test("renders safe responsive four-view dashboard", () => {
   const html = panelHtml({ snapshots: [], history: [], agents: [{ name: "reviewer", description: "Review", model: "openrouter/x", tools: [], prompt: "local only" }], accounts: [], ai: null, updatedAt: 0 })
@@ -448,4 +449,107 @@ test("bindet [data-action]-Buttons initial und nach jedem Fragment-Tausch neu", 
   // host.innerHTML = html, dann bindActions(host). Vorher wuerde die Bindung
   // mit dem Tausch wieder verworfen.
   expect(html.indexOf("bindActions(host)")).toBeGreaterThan(html.indexOf("host.innerHTML = html"))
+})
+
+// Runde 5: Jede Modellzeile traegt neben data-model/data-provider/data-price
+// jetzt auch data-name/data-input/data-output/data-benchmark — die Sortierwerte
+// fuer die drei-Stufen-Sortierung der Tabelle. Geprueft wird die vollstaendige
+// Zeilenoefnung mit konkreten Werten (die blossen Attributnamen staenden sonst
+// auch im eingebetteten Script-Text).
+test("markiert Modellzeilen mit den Sortier-Daten name, input, output und benchmark", () => {
+  // Preise und Benchmark-Details: die Zeile soll beide Quellen abbilden.
+  const offer: any = { provider: "openrouter", id: "m", name: "Alpha", pricing: { input: 1.5, output: 3 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] },
+    benchmarks: { source: "test", match: "direct", coding: 90, intelligence: 80, details: [{ name: "gpqa_diamond", score: 94.2 }] } }
+  // Direkt im modelRows-Fragment: exakte Attributfolge einer Modellzeile.
+  const rows = modelRows([offer])
+  expect(rows).toContain('<tr data-model="alpha openrouter coding" data-name="Alpha" data-provider="openrouter" data-price="paid" data-input="1.5" data-output="3" data-benchmark="90"><td>')
+  // Derselbe Renderpfad im vollen panelHtml (das Fragment wird dort eingebettet).
+  const html = panelHtml({ snapshots: [{ provider: "openrouter", offers: [offer], checkedAt: 0, stale: false }], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain('data-name="Alpha" data-provider="openrouter" data-price="paid" data-input="1.5" data-output="3" data-benchmark="90">')
+  // Ohne aggregierte Scores liefert das hoechste Einzel-Benchmark den Sortierwert.
+  const detailsOnly: any = { provider: "openrouter", id: "d", name: "Details", pricing: { input: 0.5, output: 1 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] },
+    benchmarks: { source: "test", match: "direct", details: [{ name: "gpqa_diamond", score: 94.2 }] } }
+  expect(modelRows([detailsOnly])).toContain('data-benchmark="94.2">')
+})
+
+// Die Helper priceSortValue/benchmarkSortValue legen unbekannte Preise und
+// fehlende Benchmarks absichtlich ans Ende der aufsteigenden Sortierung:
+// beide liefern einheitlich Number.MAX_VALUE (SORT_UNKNOWN), das als
+// 1.7976931348623157e+308 im data-Attribut erscheint.
+test("legt unbekannte Preise und fehlende Benchmarks ans Ende der Sortierwerte", () => {
+  const offer: any = { provider: "openrouter", id: "u", name: "Unbekannt", pricing: { input: 1, output: 2, unknown: true },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
+  const rows = modelRows([offer])
+  expect(rows).toContain('data-price="unknown" data-input="1.7976931348623157e+308" data-output="1.7976931348623157e+308" data-benchmark="1.7976931348623157e+308">')
+})
+
+// Runde 5, Skript: Die Modelle-Tabelle blaettert statt alle Zeilen zu rendern.
+// PAGE_SIZE=100, pro Seite werden nur die passenden Zeilen sichtbar geschaltet,
+// der Seitenzahler ist eine aria-live-Region, die Blätter-Buttons tragen
+// aria-Labels und sind an den Raendern deaktiviert.
+test("bettet Pagination mit Seitenzahler, aria-live und Rand-Disabling ins Skript ein", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain("const PAGE_SIZE = 100")
+  // Seitenberechnung und Sichtbarkeitsfenster der Seite.
+  expect(html).toContain("pages = Math.max(1, Math.ceil(visible / PAGE_SIZE))")
+  expect(html).toContain("row.hidden = i < start || i >= start + PAGE_SIZE")
+  // Seitenzähler als Live-Region, Blaettern waagerecht benannt.
+  expect(html).toContain("info.textContent = 'Seite ' + page + ' von ' + pages")
+  expect(html).toContain("info.setAttribute('aria-live', 'polite')")
+  expect(html).toContain("bar.setAttribute('role', 'navigation')")
+  expect(html).toContain("bar.setAttribute('aria-label', 'Modell-Seiten Navigation')")
+  expect(html).toContain("prev.setAttribute('aria-label', 'Vorherige Modellseite')")
+  expect(html).toContain("next.setAttribute('aria-label', 'Nächste Modellseite')")
+  // disabled an den Raendern: vorne kein Zurück, hinten kein Weiter.
+  expect(html).toContain("prev.disabled = page <= 1")
+  expect(html).toContain("next.disabled = page >= pages")
+  // Bei hoechstens einer Seite bleibt die Leiste verdeckt.
+  expect(html).toContain("if (total <= PAGE_SIZE) { bar.hidden = true; bar.replaceChildren(); return }")
+})
+
+// Debounce: ein input-Event pro Tastendruck iteriert sonst bei hunderten Zeilen
+// — 150 ms Pause, und jeder neue Filterlauf startet wieder auf Seite 1.
+test("entprellt die Suche mit 150ms und startet Filter- und Change-Wechsel auf Seite 1", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain("clearTimeout(filterTimer); filterTimer = setTimeout(() => { page = 1; applyFilter() }, 150)")
+  // Nur die Suche laeuft ueber den Debounce; die Selects filtern sofort.
+  expect(html).toContain("document.getElementById('search').addEventListener('input', scheduleFilter)")
+  expect(html).toContain("addEventListener('change', () => { page = 1; applyFilter() })")
+})
+
+// Runde 5: Die Sortierkoepfe der Modelle-Tabelle — drei Stufen (aufsteigend,
+// absteigend, zurueck zur Default-Name-Sortierung), aria-sort-Pflege und
+// Tastaturbedienung. Jeder Sortierwechsel beginnt wieder auf Seite 1.
+test("sortiert ueber drei Stufen mit aria-sort und Tastatur, immer zurueck auf Seite 1", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  // Spaltenwahl: Modell(0), Input(2), Output(3), Benchmark(5).
+  expect(html).toContain("const SORT_COLUMNS = [['name', 0], ['input', 2], ['output', 3], ['benchmark', 5]]")
+  expect(html).toContain("th.setAttribute('data-sort', key)")
+  expect(html).toContain("th.setAttribute('tabindex', '0')")
+  expect(html).toContain("e.key === 'Enter' || e.key === ' '")
+  // aria-sort: nur die aktive Spalte traegt den Wert, alle anderen nicht.
+  expect(html).toContain("th.setAttribute('aria-sort', sortDir === 'asc' ? 'ascending' : 'descending')")
+  expect(html).toContain("th.removeAttribute('aria-sort')")
+  // Drei Stufen: asc -> desc -> Default (Name aufsteigend).
+  expect(html).toContain("if (sortKey === key && sortDir === 'asc') sortDir = 'desc'")
+  expect(html).toContain("else if (sortKey === key && sortDir === 'desc') { sortKey = 'name'; sortDir = 'asc' }")
+  expect(html).toContain("else { sortKey = key; sortDir = 'asc' }")
+  // Nach dem Umschalten beginnt die neue Ansicht auf Seite 1.
+  expect(html).toContain("page = 1\n  updateSortAria()")
+  // Pipeline-Reihenfolge: erst filtern, dann sortieren, dann paginieren.
+  expect(html.indexOf("row._m = m")).toBeLessThan(html.indexOf("sortValue(a, sortKey)"))
+  expect(html.indexOf("sortValue(a, sortKey)")).toBeLessThan(html.indexOf("row.hidden = i < start"))
+})
+
+// Runde 5: minimales Layout fuer die Blaetterleiste und Der Cursor auf den
+// sortierbaren Kopfzeilen — von außen sichtbare Zeichen der neuen Steuerung.
+test("gestaltet Seitenleiste und sortierbare Kopfzeilen", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).toContain(".pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0 4px}")
+  expect(html).toContain(".pagination[hidden]{display:none}")
+  expect(html).toContain(".pagination button:disabled{opacity:.5;cursor:default}")
+  expect(html).toContain("#models thead th[data-sort]{cursor:pointer}")
+  expect(html).toContain("#models thead th[data-sort]:hover{color:var(--violet)}")
 })

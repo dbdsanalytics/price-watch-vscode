@@ -536,21 +536,126 @@ document.querySelectorAll('[data-view]').forEach((button) => button.addEventList
 const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
 bindActions(document)
 
-const applyFilter = () => {
+// --- Modelle-Tabelle: Filter -> Sortieren -> Paginieren ---------------------
+// Bei hunderten OpenRouter-Modellen wuerde ein input-Event pro Tastendruck
+// ueber alle Zeilen iterieren \u2014 deshalb Debounce, und deshalb werden pro Seite
+// nur PAGE_SIZE Zeilen sichtbar gezeigt (hidden, nicht entfernt).
+const PAGE_SIZE = 100
+let page = 1
+let sortKey = 'name'     // 'name' | 'input' | 'output' | 'benchmark'
+let sortDir = 'asc'      // 'asc' | 'desc'
+
+const matchRow = (row) => {
   const q = search.value.toLowerCase(), p = provider.value, c = price.value, u = purpose.value
+  return row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u))
+}
+const sortValue = (row, key) => key === 'name' ? (row.dataset.name ?? '') : Number(row.dataset[key] ?? 0)
+
+const applyFilter = () => {
+  const rows = [...document.querySelectorAll('[data-model]')]
   let visible = 0
-  document.querySelectorAll('[data-model]').forEach((row) => {
-    const show = row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u))
-    row.hidden = !show
-    if (show) visible++
-  })
+  rows.forEach((row) => { const m = matchRow(row); row._m = m; if (m) visible++ })
   // Leerer tbody sah bisher aus wie "keine Daten" \u2014 dabei war nur der Filter
   // zu streng. Die bereitliegende Empty-Zeile wird sichtbar, sobald keine
   // Modellzeile mehr matched, und verdeckt sonst.
   const emptyFilter = document.querySelector('[data-empty-filter]')
   if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = visible > 0
+  // Sortieren: nur die gefilterten Zeilen nach dem aktiven Kriterium.
+  const matched = rows.filter((row) => row._m).sort((a, b) => {
+    const va = sortValue(a, sortKey), vb = sortValue(b, sortKey)
+    const cmp = sortKey === 'name'
+      ? String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
+      : va - vb
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+  // DOM-Reihenfolge anpassen; die Empty-Zeile bleibt immer zuletzt.
+  const tbody = document.querySelector('[data-fragment="models"]')
+  const tail = document.querySelector('[data-empty-filter]')
+  if (tbody && tail) matched.forEach((row) => tbody.insertBefore(row, tail))
+  // Paginieren: Seite X von Y, maximal PAGE_SIZE sichtbar.
+  const pages = Math.max(1, Math.ceil(visible / PAGE_SIZE))
+  if (page > pages) page = pages
+  if (page < 1) page = 1
+  const start = (page - 1) * PAGE_SIZE
+  matched.forEach((row, i) => { row.hidden = i < start || i >= start + PAGE_SIZE })
+  rows.forEach((row) => { if (!row._m) row.hidden = true })
+  renderPagination(visible, pages)
+  save()
 }
-;['search', 'provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener(id === 'search' ? 'input' : 'change', () => { applyFilter(); save() }))
+
+const renderPagination = (total, pages) => {
+  const host = document.getElementById('models')
+  let bar = host ? host.querySelector('.pagination') : null
+  if (!bar) {
+    bar = document.createElement('div')
+    bar.className = 'pagination'
+    bar.setAttribute('role', 'navigation')
+    bar.setAttribute('aria-label', 'Modell-Seiten Navigation')
+    if (host) host.appendChild(bar)
+  }
+  // Bis PAGE_SIZE braucht es keine Blaetterung.
+  if (total <= PAGE_SIZE) { bar.hidden = true; bar.replaceChildren(); return }
+  bar.hidden = false
+  const prev = document.createElement('button')
+  prev.type = 'button'
+  prev.textContent = 'Zur\xFCck'
+  prev.setAttribute('aria-label', 'Vorherige Modellseite')
+  prev.disabled = page <= 1
+  prev.addEventListener('click', () => { page = Math.max(1, page - 1); applyFilter() })
+  const info = document.createElement('span')
+  info.textContent = 'Seite ' + page + ' von ' + pages
+  info.setAttribute('aria-live', 'polite')
+  const next = document.createElement('button')
+  next.type = 'button'
+  next.textContent = 'Weiter'
+  next.setAttribute('aria-label', 'N\xE4chste Modellseite')
+  next.disabled = page >= pages
+  next.addEventListener('click', () => { page = Math.min(pages, page + 1); applyFilter() })
+  bar.replaceChildren(prev, info, next)
+}
+
+// Sortier-K\xF6pfe: die <th>-Zellen liegen ausserhalb des getauschten Fragments
+// (das Fragment ist das tbody) und bekommen data-sort/aria-sort erst hier im
+// Skript \u2014 panelHtml/index.ts bleibt unangetastet. Spalten: Modell(0),
+// Input(2), Output(3), Benchmark(5). Klick: asc -> desc -> Default (Name asc).
+const SORT_COLUMNS = [['name', 0], ['input', 2], ['output', 3], ['benchmark', 5]]
+const updateSortAria = () => {
+  document.querySelectorAll('#models thead [data-sort]').forEach((th) => {
+    if (th.dataset.sort === sortKey) th.setAttribute('aria-sort', sortDir === 'asc' ? 'ascending' : 'descending')
+    else th.removeAttribute('aria-sort')
+  })
+}
+const toggleSort = (key) => {
+  if (sortKey === key && sortDir === 'asc') sortDir = 'desc'
+  else if (sortKey === key && sortDir === 'desc') { sortKey = 'name'; sortDir = 'asc' }
+  else { sortKey = key; sortDir = 'asc' }
+  page = 1
+  updateSortAria()
+  applyFilter()
+}
+const initSortHeaders = () => {
+  const ths = document.querySelectorAll('#models thead th')
+  if (!ths.length) return
+  SORT_COLUMNS.forEach(([key, idx]) => {
+    const th = ths[idx]
+    if (!th) return
+    th.setAttribute('data-sort', key)
+    th.setAttribute('tabindex', '0')
+    th.addEventListener('click', () => toggleSort(key))
+    th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(key) } })
+  })
+  updateSortAria()
+}
+
+// Debounce: ein input-Event pro Tastendruck waere bei hunderten Zeilen spuerbar
+// \u2014 150 ms reichen, ohne die Eingabe tr\xE4ge wirken zu lassen. clearTimeout/
+// setTimeout machen die Mechanik im Skripttext pruefbar.
+let filterTimer = null
+const scheduleFilter = () => { clearTimeout(filterTimer); filterTimer = setTimeout(() => { page = 1; applyFilter() }, 150) }
+document.getElementById('search').addEventListener('input', scheduleFilter)
+;['provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener('change', () => { page = 1; applyFilter() }))
+
+initSortHeaders()
 
 const applyHistoryFilter = () => {
   const q = document.getElementById('history-search').value.toLowerCase()
@@ -616,6 +721,7 @@ var CSS = `
 :root{color-scheme:light dark;--violet:#a78bfa;--blue:#60a5fa;--cyan:#2dd4bf;--pink:#f472b6;--yellow:#facc15;--green:#4ade80;--orange:#fb923c;--allround:#94a3b8;--muted:var(--vscode-descriptionForeground)}*{box-sizing:border-box}body{margin:0;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-size)/1.4 var(--vscode-font-family)}button,input,select{font:inherit}button{border:1px solid var(--vscode-button-border,var(--vscode-panel-border));border-radius:6px;padding:5px 9px;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground);cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder,var(--vscode-button-border));outline-offset:2px;border-radius:6px}.topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:24px;min-height:44px;padding:0 16px;border-bottom:1px solid var(--vscode-panel-border);background:color-mix(in srgb,var(--vscode-editor-background) 94%,transparent);backdrop-filter:blur(12px)}.topbar button{border:0;padding:11px 0;background:none;color:var(--muted)}.topbar .brand{font-weight:750;color:var(--vscode-foreground)}.topbar nav{display:flex;gap:20px}.topbar nav button.active{color:var(--violet);box-shadow:inset 0 -2px var(--violet)}.live{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--muted)}.live i{width:8px;height:8px;border-radius:50%;background:var(--green)}.live-slot{display:contents}.live-live i{background:var(--green)}.live-stale i{background:var(--yellow)}.live-error{color:var(--vscode-errorForeground)}.live-error i{background:var(--vscode-errorForeground)}main{padding:12px 16px}.view[hidden],[data-model][hidden],[data-empty-filter][hidden]{display:none}h1,h2,h3,h4,p{margin:0}h1{font-size:1.55em}h2{font-size:1.05em}.page-head{margin:5px 0 12px}.page-head p,.empty{color:var(--muted)}.empty-state td{text-align:center;color:var(--muted);padding:18px}.metrics{display:flex;flex-wrap:wrap;gap:8px 28px;padding:2px 2px 10px;color:var(--muted)}.metrics span{display:flex;align-items:baseline;gap:5px}.metrics strong{font-size:1.4em;color:var(--vscode-foreground)}.insight{display:flex;gap:8px;padding:7px 10px;margin-bottom:8px;border-left:3px solid var(--violet);border-radius:5px;background:color-mix(in srgb,var(--violet) 15%,var(--vscode-editorWidget-background))}.insight strong{white-space:nowrap;color:#d8b4fe}.dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;align-items:start}.card{min-width:0;padding:10px;border:1px solid var(--vscode-panel-border);border-radius:9px;background:var(--vscode-editorWidget-background)}.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}.card-head button,.more{color:var(--violet);background:none}.purpose-block{border-top:1px solid color-mix(in srgb,var(--vscode-panel-border) 60%,transparent)}.purpose-block:first-of-type{border-top:0}.purpose-block summary{display:flex;align-items:center;gap:8px;padding:7px 2px;cursor:pointer}.purpose-block summary span{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:color-mix(in srgb,currentColor 16%,transparent);font-weight:800}.purpose-block summary strong{font-size:1.12em}.purpose-coding{color:var(--blue)}.purpose-language{color:var(--cyan)}.purpose-reasoning{color:var(--violet)}.purpose-vision{color:var(--pink)}.purpose-tools{color:var(--yellow)}.purpose-allround{color:var(--allround)}.rank-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 0 8px 30px;color:var(--vscode-foreground)}.rank-column{padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.rank-column h4{display:flex;align-items:center;gap:6px}.rank-column h4 i{width:8px;height:8px;border-radius:50%}.price-free h4{color:var(--green)}.price-free h4 i{background:var(--green)}.price-paid h4{color:var(--orange)}.price-paid h4 i{background:var(--orange)}.rank-column ol{margin:4px 0 0;padding-left:20px}.rank-column li{padding:2px 0}.rank-column li strong,.rank-column li small{display:block}.rank-column li small{color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:4px;width:max-content;border:1px solid color-mix(in srgb,currentColor 32%,transparent);border-radius:999px;padding:1px 6px;background:color-mix(in srgb,currentColor 13%,transparent);font-size:.8em}.badge b{font-size:.85em}.provider i{width:6px;height:6px;border-radius:2px;background:currentColor}.provider-openrouter{color:var(--violet)}.provider-opencode-zen{color:var(--cyan)}.provider-opencode-go{color:var(--blue)}.agent-preview{padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 50%,transparent)}.agent-preview .agent-model span,.agent-preview .agent-identity .badge{display:none}.agent-preview .agent-result small{display:none}.more{width:100%;margin-top:6px}.agent-groups{display:grid;gap:12px}.agent-group{overflow:hidden;border:1px solid var(--vscode-panel-border);border-radius:10px;background:var(--vscode-editorWidget-background)}.agent-group>header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--vscode-panel-border)}.agent-group>header p{color:var(--muted);font-size:.88em}.agent-group>header>span{min-width:28px;padding:3px 8px;border-radius:999px;text-align:center;background:var(--vscode-badge-background)}.agent-group-attention{border-left:3px solid var(--orange)}.agent-group-suitable{border-left:3px solid var(--green)}.agent-group-unknown{border-left:3px solid var(--allround)}.agent-row{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(240px,1.3fr) minmax(190px,1fr);gap:12px;align-items:center;min-width:0;padding:8px 12px;border-bottom:1px solid color-mix(in srgb,var(--vscode-panel-border) 55%,transparent)}.agent-row:last-child{border-bottom:0}.agent-identity,.agent-model,.agent-result{min-width:0}.agent-identity{display:flex;align-items:center;gap:8px}.agent-model span,.agent-result small{display:block;color:var(--muted);font-size:.82em}.agent-model strong{display:block;overflow-wrap:anywhere}.agent-result{text-align:right}.status{font-weight:700}.status-suitable,.status-available,.key-state-active{color:var(--green)}.status-alternative-available,.status-expensive,.status-low{color:var(--orange)}.status-deprecated,.status-unsuitable,.status-exhausted,.key-state-disabled,.key-state-expired{color:var(--vscode-errorForeground)}.status-unknown,.status-unavailable,.status-disconnected{color:var(--muted)}.group-empty{padding:12px}.filters{display:grid;grid-template-columns:minmax(190px,1fr) repeat(3,minmax(130px,auto));gap:6px;margin-bottom:8px}.filters input,.filters select{min-width:0;padding:7px 8px;border:1px solid var(--vscode-input-border,var(--vscode-panel-border));border-radius:6px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}.table-wrap{overflow:auto;border:1px solid var(--vscode-panel-border);border-radius:9px}table{width:100%;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid var(--vscode-panel-border);text-align:left;vertical-align:middle}th{position:sticky;top:44px;z-index:2;background:var(--vscode-editorWidget-background);color:var(--muted)}td>strong,td>small{display:block}td>small{color:var(--muted)}.capabilities{display:flex;flex-wrap:wrap;gap:4px}.price{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.price:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.price-free{color:var(--green)}.price-paid{color:var(--orange)}.price-unknown{color:var(--muted)}.provider-sections{display:grid;gap:12px}.account-provider-section{overflow:hidden;border:1px solid var(--vscode-panel-border);border-left:3px solid currentColor;border-radius:10px;background:var(--vscode-editorWidget-background);color:var(--vscode-foreground)}.account-provider-section>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid var(--vscode-panel-border)}.account-provider-section>header p{color:var(--muted)}.provider-title{display:flex;align-items:center;gap:8px;font-size:1.18em;font-weight:750}.provider-title i{width:10px;height:10px;border-radius:3px;background:currentColor}.account-provider-section.provider-openrouter{border-left-color:var(--violet)}.account-provider-section.provider-opencode-zen{border-left-color:var(--cyan)}.account-provider-section.provider-opencode-go{border-left-color:var(--blue)}.account-provider-section.provider-openrouter .provider-title{color:var(--violet)}.account-provider-section.provider-opencode-zen .provider-title{color:var(--cyan)}.account-provider-section.provider-opencode-go .provider-title{color:var(--blue)}.connection-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px}.connection{min-width:0;padding:9px 10px;border:1px solid var(--vscode-panel-border);border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.connection-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.connection-head span{display:block;color:var(--muted);font-size:.84em}.account-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-top:8px}.account-summary small{display:block;color:var(--muted)}.account-summary .status{max-width:55%;text-align:right;overflow-wrap:anywhere}.management-state{margin-top:8px}.account-metrics{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px;padding:0 12px 10px}.account-metric{padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent)}.account-metric strong,.account-metric small{display:block}.account-metric strong{font-size:1.25em}.account-metric small{color:var(--muted)}.metric-good strong{color:var(--green)}.metric-warn strong{color:var(--orange)}.managed-keys{padding:0 12px 12px}.managed-keys>header{display:flex;align-items:end;justify-content:space-between;gap:8px;padding:4px 0 7px}.managed-keys>header span{color:var(--muted);font-size:.84em}.managed-key{display:grid;grid-template-columns:minmax(170px,1.4fr) auto repeat(3,minmax(120px,1fr));gap:12px;align-items:center;padding:8px 10px;border-top:1px solid var(--vscode-panel-border)}.managed-key small,.managed-key strong{display:block}.managed-key small{color:var(--muted)}.managed-key strong{overflow-wrap:anywhere}.notice{margin:8px 16px;padding:7px 10px;border-left:3px solid var(--vscode-errorForeground);border-radius:5px;background:color-mix(in srgb,var(--vscode-errorForeground) 12%,transparent)}body.vscode-light,body.vscode-high-contrast-light{--violet:#7c3aed;--green:#15803d;--allround:#475569}body.vscode-light .insight strong,body.vscode-high-contrast-light .insight strong{color:var(--violet)}
 @media(max-width:1050px){.filters{grid-template-columns:1fr 1fr}.account-metrics{grid-template-columns:1fr 1fr}.managed-key{grid-template-columns:1fr auto 1fr 1fr}.managed-key>div:last-child{display:none}.dashboard{grid-template-columns:1.6fr 1fr}}
 @media(max-width:700px){.topbar{gap:12px;overflow-x:auto}.topbar nav{gap:12px}.dashboard{grid-template-columns:1fr}.insight{display:block}.insight strong{display:block}.rank-columns,.connection-grid{grid-template-columns:1fr}.rank-columns{padding-left:0}.filters,.account-metrics{grid-template-columns:1fr}.agent-row{grid-template-columns:1fr;gap:5px}.agent-identity{justify-content:space-between}.agent-result{text-align:left}.managed-key{grid-template-columns:1fr auto}.managed-key>div{display:none}.managed-key>.key-name{display:block}.account-provider-section>header{align-items:flex-start}.account-summary{display:block}.account-summary .status{display:block;max-width:none;margin-top:4px;text-align:left}.managed-keys>header span{display:none}}@media(min-width:1051px){.dashboard{grid-template-columns:2fr 1fr 1fr}.dashboard .history-card{grid-column:1/-1}}
+.pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0 4px}.pagination[hidden]{display:none}.pagination span{color:var(--muted)}.pagination button:disabled{opacity:.5;cursor:default}#models thead th[data-sort]{cursor:pointer}#models thead th[data-sort]:hover{color:var(--violet)}
 `;
 
 // src/panel/views/models.ts
@@ -638,6 +744,18 @@ function quotaLine(offer) {
 }
 function priceClass(offer) {
   return isFreePricing(offer.pricing) ? "free" : offer.pricing.unknown ? "unknown" : "paid";
+}
+var SORT_UNKNOWN = Number.MAX_VALUE;
+function priceSortValue(offer, side) {
+  return offer.pricing.unknown ? SORT_UNKNOWN : offer.pricing[side];
+}
+function benchmarkSortValue(offer) {
+  const scores = offer.benchmarks;
+  if (!scores) return SORT_UNKNOWN;
+  const dims = [scores.intelligence, scores.coding, scores.agentic].filter((value) => typeof value === "number");
+  if (dims.length) return Math.max(...dims);
+  const details = scores.details ?? [];
+  return details.length ? Math.max(...details.map((detail) => detail.score)) : SORT_UNKNOWN;
 }
 function priceCell(offer, side) {
   if (offer.pricing.unknown) return "Preis unbekannt";
@@ -686,7 +804,7 @@ function benchmarkCell(offer) {
 }
 function modelRows(offers) {
   if (!offers.length) return `<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>`;
-  return offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-provider="${offer.provider}" data-price="${priceClass(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden \u2014 Filter anpassen</td></tr>`;
+  return offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer, "input")}" data-output="${priceSortValue(offer, "output")}" data-benchmark="${benchmarkSortValue(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden \u2014 Filter anpassen</td></tr>`;
 }
 function modelFilters() {
   return `<div class="filters"><input id="search" placeholder="Modelle durchsuchen" aria-label="Modelle durchsuchen"><select id="provider" aria-label="Anbieter filtern"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price" aria-label="Preis filtern"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose" aria-label="F\xE4higkeit filtern"><option value="">Alle F\xE4higkeiten</option>${Object.entries(labels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div>`;

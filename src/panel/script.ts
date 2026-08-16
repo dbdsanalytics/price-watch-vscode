@@ -40,21 +40,126 @@ document.querySelectorAll('[data-view]').forEach((button) => button.addEventList
 const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
 bindActions(document)
 
-const applyFilter = () => {
+// --- Modelle-Tabelle: Filter -> Sortieren -> Paginieren ---------------------
+// Bei hunderten OpenRouter-Modellen wuerde ein input-Event pro Tastendruck
+// ueber alle Zeilen iterieren — deshalb Debounce, und deshalb werden pro Seite
+// nur PAGE_SIZE Zeilen sichtbar gezeigt (hidden, nicht entfernt).
+const PAGE_SIZE = 100
+let page = 1
+let sortKey = 'name'     // 'name' | 'input' | 'output' | 'benchmark'
+let sortDir = 'asc'      // 'asc' | 'desc'
+
+const matchRow = (row) => {
   const q = search.value.toLowerCase(), p = provider.value, c = price.value, u = purpose.value
+  return row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u))
+}
+const sortValue = (row, key) => key === 'name' ? (row.dataset.name ?? '') : Number(row.dataset[key] ?? 0)
+
+const applyFilter = () => {
+  const rows = [...document.querySelectorAll('[data-model]')]
   let visible = 0
-  document.querySelectorAll('[data-model]').forEach((row) => {
-    const show = row.dataset.model.includes(q) && (!p || row.dataset.provider === p) && (!c || row.dataset.price === c) && (!u || row.dataset.model.includes(u))
-    row.hidden = !show
-    if (show) visible++
-  })
+  rows.forEach((row) => { const m = matchRow(row); row._m = m; if (m) visible++ })
   // Leerer tbody sah bisher aus wie "keine Daten" — dabei war nur der Filter
   // zu streng. Die bereitliegende Empty-Zeile wird sichtbar, sobald keine
   // Modellzeile mehr matched, und verdeckt sonst.
   const emptyFilter = document.querySelector('[data-empty-filter]')
   if (emptyFilter instanceof HTMLElement) emptyFilter.hidden = visible > 0
+  // Sortieren: nur die gefilterten Zeilen nach dem aktiven Kriterium.
+  const matched = rows.filter((row) => row._m).sort((a, b) => {
+    const va = sortValue(a, sortKey), vb = sortValue(b, sortKey)
+    const cmp = sortKey === 'name'
+      ? String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
+      : va - vb
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+  // DOM-Reihenfolge anpassen; die Empty-Zeile bleibt immer zuletzt.
+  const tbody = document.querySelector('[data-fragment="models"]')
+  const tail = document.querySelector('[data-empty-filter]')
+  if (tbody && tail) matched.forEach((row) => tbody.insertBefore(row, tail))
+  // Paginieren: Seite X von Y, maximal PAGE_SIZE sichtbar.
+  const pages = Math.max(1, Math.ceil(visible / PAGE_SIZE))
+  if (page > pages) page = pages
+  if (page < 1) page = 1
+  const start = (page - 1) * PAGE_SIZE
+  matched.forEach((row, i) => { row.hidden = i < start || i >= start + PAGE_SIZE })
+  rows.forEach((row) => { if (!row._m) row.hidden = true })
+  renderPagination(visible, pages)
+  save()
 }
-;['search', 'provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener(id === 'search' ? 'input' : 'change', () => { applyFilter(); save() }))
+
+const renderPagination = (total, pages) => {
+  const host = document.getElementById('models')
+  let bar = host ? host.querySelector('.pagination') : null
+  if (!bar) {
+    bar = document.createElement('div')
+    bar.className = 'pagination'
+    bar.setAttribute('role', 'navigation')
+    bar.setAttribute('aria-label', 'Modell-Seiten Navigation')
+    if (host) host.appendChild(bar)
+  }
+  // Bis PAGE_SIZE braucht es keine Blaetterung.
+  if (total <= PAGE_SIZE) { bar.hidden = true; bar.replaceChildren(); return }
+  bar.hidden = false
+  const prev = document.createElement('button')
+  prev.type = 'button'
+  prev.textContent = 'Zurück'
+  prev.setAttribute('aria-label', 'Vorherige Modellseite')
+  prev.disabled = page <= 1
+  prev.addEventListener('click', () => { page = Math.max(1, page - 1); applyFilter() })
+  const info = document.createElement('span')
+  info.textContent = 'Seite ' + page + ' von ' + pages
+  info.setAttribute('aria-live', 'polite')
+  const next = document.createElement('button')
+  next.type = 'button'
+  next.textContent = 'Weiter'
+  next.setAttribute('aria-label', 'Nächste Modellseite')
+  next.disabled = page >= pages
+  next.addEventListener('click', () => { page = Math.min(pages, page + 1); applyFilter() })
+  bar.replaceChildren(prev, info, next)
+}
+
+// Sortier-Köpfe: die <th>-Zellen liegen ausserhalb des getauschten Fragments
+// (das Fragment ist das tbody) und bekommen data-sort/aria-sort erst hier im
+// Skript — panelHtml/index.ts bleibt unangetastet. Spalten: Modell(0),
+// Input(2), Output(3), Benchmark(5). Klick: asc -> desc -> Default (Name asc).
+const SORT_COLUMNS = [['name', 0], ['input', 2], ['output', 3], ['benchmark', 5]]
+const updateSortAria = () => {
+  document.querySelectorAll('#models thead [data-sort]').forEach((th) => {
+    if (th.dataset.sort === sortKey) th.setAttribute('aria-sort', sortDir === 'asc' ? 'ascending' : 'descending')
+    else th.removeAttribute('aria-sort')
+  })
+}
+const toggleSort = (key) => {
+  if (sortKey === key && sortDir === 'asc') sortDir = 'desc'
+  else if (sortKey === key && sortDir === 'desc') { sortKey = 'name'; sortDir = 'asc' }
+  else { sortKey = key; sortDir = 'asc' }
+  page = 1
+  updateSortAria()
+  applyFilter()
+}
+const initSortHeaders = () => {
+  const ths = document.querySelectorAll('#models thead th')
+  if (!ths.length) return
+  SORT_COLUMNS.forEach(([key, idx]) => {
+    const th = ths[idx]
+    if (!th) return
+    th.setAttribute('data-sort', key)
+    th.setAttribute('tabindex', '0')
+    th.addEventListener('click', () => toggleSort(key))
+    th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(key) } })
+  })
+  updateSortAria()
+}
+
+// Debounce: ein input-Event pro Tastendruck waere bei hunderten Zeilen spuerbar
+// — 150 ms reichen, ohne die Eingabe träge wirken zu lassen. clearTimeout/
+// setTimeout machen die Mechanik im Skripttext pruefbar.
+let filterTimer = null
+const scheduleFilter = () => { clearTimeout(filterTimer); filterTimer = setTimeout(() => { page = 1; applyFilter() }, 150) }
+document.getElementById('search').addEventListener('input', scheduleFilter)
+;['provider', 'price', 'purpose'].forEach((id) => document.getElementById(id).addEventListener('change', () => { page = 1; applyFilter() }))
+
+initSortHeaders()
 
 const applyHistoryFilter = () => {
   const q = document.getElementById('history-search').value.toLowerCase()

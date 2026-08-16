@@ -21,6 +21,21 @@ export function quotaLine(offer: ModelOffer): string {
 
 export function priceClass(offer: ModelOffer): string { return isFreePricing(offer.pricing) ? "free" : offer.pricing.unknown ? "unknown" : "paid" }
 
+// Sortierwerte als data-Attribute an der Zeile. Unbekannte Preise und fehlende
+// Benchmarks liegen absichtlich am Ende der aufsteigenden Sortierung.
+const SORT_UNKNOWN = Number.MAX_VALUE
+export function priceSortValue(offer: ModelOffer, side: "input" | "output"): number {
+  return offer.pricing.unknown ? SORT_UNKNOWN : offer.pricing[side]
+}
+export function benchmarkSortValue(offer: ModelOffer): number {
+  const scores = offer.benchmarks
+  if (!scores) return SORT_UNKNOWN
+  const dims = [scores.intelligence, scores.coding, scores.agentic].filter((value): value is number => typeof value === "number")
+  if (dims.length) return Math.max(...dims)
+  const details = scores.details ?? []
+  return details.length ? Math.max(...details.map((detail) => detail.score)) : SORT_UNKNOWN
+}
+
 /** Gestufte Preise als Spanne: der Basispreis allein verschweigt die obere Stufe. */
 export function priceCell(offer: ModelOffer, side: "input" | "output"): string {
   if (offer.pricing.unknown) return "Preis unbekannt"
@@ -63,7 +78,7 @@ export function modelRows(offers: ModelOffer[]): string {
   // Die zweite Empty-Zeile liegt verdeckt bereit und wird vom Filter im
   // Script sichtbar geschaltet, sobald keine Modellzeile mehr matched —
   // statt die Tabelle einfach leer zu lassen.
-  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-provider="${offer.provider}" data-price="${priceClass(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>`
+  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer,"input")}" data-output="${priceSortValue(offer,"output")}" data-benchmark="${benchmarkSortValue(offer)}"><td><strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>`
 }
 
 /** Die Bedienelemente liegen ausserhalb der Fragmente und ueberleben jeden Tausch. */
