@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 – 2026-08-16
+
+- Bewertet Modelle mit Benchmark-Details jetzt mit Dimensions-Scores für Intelligence, Coding und Agentic statt als unrated; fehlen die Dimensionsdaten, zeigt die Modellansicht die einzelnen Werte als Fallback.
+- Migriert den gespeicherten Zustand aus den Versionen 0.1 und 0.2 in das v3-Format, ohne gesammelte Daten zu verlieren.
+- Macht die Webview zugänglicher: Aria-Labels und Landmarks, Tastatur-Fokus-Steuerung, sichtbare `:focus-visible`-Markierungen und eine CSP, die keine externen Bilder mehr lädt (`img-src 'none'`).
+- Stellt das Karten-Raster auf ein responsives 2fr-1fr-1fr-Layout um.
+- Ergänzt ein Erweiterungs-Icon und erweitert das README.
+
 ## 0.3.0 – 2026-08-13
 
 - Zeigt oben in der Übersicht, was Aufmerksamkeit braucht: leeres Guthaben, Agenten auf abgekündigten Modellen, deutliche Preissprünge, Probleme beim Abruf. Ein Klick springt in die zuständige Ansicht. Ist nichts zu tun, bleibt die Zeile leer.

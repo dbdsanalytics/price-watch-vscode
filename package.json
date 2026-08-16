@@ -2,7 +2,7 @@
   "name": "price-watch",
   "displayName": "Preis-Watch (OpenRouter & OpenCode)",
   "description": "Zeigt die aktuellen Modellpreise von OpenRouter und OpenCode Zen an; eine kostenlose KI (OpenRouter Free) prüft sie stündlich und meldet Preisänderungen.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/icon.png",
