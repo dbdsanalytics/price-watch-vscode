@@ -364,3 +364,35 @@ test("legt den Filter-Empty-State verdeckt neben die Modellzeilen", () => {
   // [data-model]-Zeilen.
   expect(html).toContain("emptyFilter.hidden = visible > 0")
 })
+
+// H4-Kontrastrunde: Die Akzentfarben des Panels sind fuer helle VS-Code-Designs
+// zu blass. Der Light-Override (body.vscode-light / body.vscode-high-contrast-light)
+// setzt violet/green/allround auf kontrastreiche Werte und laesst das
+// insight strong statt des harten #d8b4fe die (ueberschriebene) --violet-
+// Variable verwenden. Dark bleibt unveraendert: :root traegt weiterhin die
+// Originalwerte, und die allround-Verwendungen laufen ueber die Variable,
+// damit der Override ueberhaupt greifen kann. Das komplette CSS liegt als
+// Konstante im <style>-Block, deshalb traegt derselbe HTML-String beide
+// Zustaende (Light-Override UND Dark-Originale).
+test("legt fuer helle VS-Code-Designs kontrastreiche Akzentfarben ueber die Dark-Werte", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  // (a) Light-Override: beide Selektor-Regeln mit allen drei Hexwerten.
+  expect(html).toContain("body.vscode-light,body.vscode-high-contrast-light{--violet:#7c3aed;--green:#15803d;--allround:#475569}")
+  expect(html).toContain("body.vscode-light .insight strong,body.vscode-high-contrast-light .insight strong{color:var(--violet)}")
+  // (b) Dark bleibt: die Originalwerte stehen weiterhin in :root — geprueft
+  // auf demselben HTML-String wie der Light-Override.
+  expect(html).toContain("--violet:#a78bfa")
+  expect(html).toContain("--green:#4ade80")
+  expect(html).toContain("--allround:#94a3b8")
+  // Auch das insight strong behaelt im Dark den harten Violettton; der
+  // Override gilt nur fuer helle Designs.
+  expect(html).toContain(".insight strong{white-space:nowrap;color:#d8b4fe}")
+  // Die allround-Verwendungen laufen ueber die Variable, sonst wuerde der
+  // Light-Override fuer allround ins Leere zielen.
+  expect(html).toContain(".purpose-allround{color:var(--allround)}")
+  expect(html).toContain(".agent-group-unknown{border-left:3px solid var(--allround)}")
+  // Der Override steht in der Kaskade NACH :root: nur so kann er die
+  // Dark-Werte ueberschreiben (body.vscode-light ist zwar spezifischer, die
+  // Position sichert die Regel zusaetzlich ab).
+  expect(html.indexOf("body.vscode-light")).toBeGreaterThan(html.indexOf(":root{"))
+})
