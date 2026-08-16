@@ -520,6 +520,11 @@ var SCRIPT = `
 const vscode = acquireVsCodeApi()
 const shown = {}
 
+// HTML-Maskierung fuer dynamische Werte, die per innerHTML eingesetzt werden
+// (z. B. die Vergleichstabelle). Entspricht esc() in src/panel/format.ts;
+// hier lokal im Skript, weil der Webview-Code keine gebuendelte Datei ist.
+const esc = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+
 // Verwirft VS Code das Webview \u2014 Tab lange im Hintergrund, Fenster neu geladen \u2014,
 // baut es die Seite von vorn auf. retainContextWhenHidden hilft nur innerhalb
 // einer Sitzung, dieser Zustand ueberdauert sie.
@@ -563,6 +568,120 @@ const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((bu
   else vscode.postMessage({ type: button.dataset.action })
 }))
 bindActions(document)
+
+// --- Modellvergleich (Side-by-Side, rein lokal) ---------------------------
+// Der Vergleich ist ein reines Panel-Feature: keine Extension-Message, kein
+// Backend, kein save()/restore(). selectedKeys ist bewusst fluechtiger
+// Sitzungszustand \u2014 ein Neuaufbau des Webview verwirft ihn. Die Auswahl
+// ueberlebt dagegen Filter/Sortierung/Paginierung, weil sie auf dem
+// offerKey (provider:id) liegt und applyCompare nach jedem Fragment-Tausch
+// die aria-pressed-Zustaende und die .selected-Markierung neu traegt.
+// MAX_COMPARE=3: bei drei ausgewaehlten Modellen ist der Vergleich voll, der
+// Warn-Hinweis wird sichtbar und weitere Klicks auf nicht ausgewaehlte
+// Modelle werden ignoriert (zunaechst eine Auswahl aufheben). Diese "ignorieren"
+// -Regel ist die einfachere, klare Variante gegenuer dem automatischen
+// Verdraengen des aeltesten Modells.
+const MAX_COMPARE = 3
+const selectedKeys = []
+let compareOpen = false
+// offersData: offerKey -> Compare-Payload (aus data-offer der Buttons). Nach
+// jedem Fragment-Tausch neu befuellt, weil die Buttons verworfen/neu erzeugt
+// werden \u2014 die Payloads muessen immer frisch aus dem DOM gelesen werden.
+const offersData = {}
+
+const bindCompareToggles = (root) => root.querySelectorAll('[data-compare-toggle]').forEach((btn) => {
+  // try/catch: ein defekter/verst\xFCmmelter data-offer-Payload darf das Skript
+  // nicht zum Abbruch bringen \u2014 der betroffene Button wird \xFCbersprungen, die
+  // \xFCbrigen Vergleichs-Buttons funktionieren weiter.
+  try {
+    if (btn.dataset.offer) offersData[btn.dataset.offerKey] = JSON.parse(btn.dataset.offer)
+  } catch (e) { console.warn('compare payload unparseable', btn.dataset.offerKey, e) }
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.offerKey
+    const i = selectedKeys.indexOf(key)
+    if (i >= 0) selectedKeys.splice(i, 1)
+    else if (selectedKeys.length < MAX_COMPARE) selectedKeys.push(key)
+    // else: Maximum erreicht \u2014 Klick ignoriert; der Warn-Hinweis in der Leiste
+    // erklaert, warum nichts passiert. Kein automatisches Verdraengen.
+    applyCompare()
+  })
+})
+bindCompareToggles(document)
+
+const renderCompareBar = () => {
+  const bar = document.getElementById('compare-bar')
+  if (!bar) return
+  const n = selectedKeys.length
+  if (n === 0) { bar.hidden = true; bar.replaceChildren(); return }
+  bar.hidden = false
+  const open = document.createElement('button')
+  open.type = 'button'
+  const label = n + ' Modell' + (n === 1 ? '' : 'e') + ' vergleichen'
+  open.textContent = label
+  open.setAttribute('aria-label', label)
+  open.disabled = n < 2
+  open.title = n < 2 ? 'Mindestens 2 Modelle ausw\xE4hlen' : 'Vergleich \xF6ffnen'
+  open.addEventListener('click', () => { if (selectedKeys.length >= 2) { compareOpen = true; renderCompareView() } })
+  const clear = document.createElement('button')
+  clear.type = 'button'
+  clear.textContent = '\u2715'
+  clear.setAttribute('aria-label', 'Vergleichsauswahl leeren')
+  clear.title = 'Auswahl leeren'
+  clear.addEventListener('click', () => { selectedKeys.length = 0; applyCompare() })
+  bar.replaceChildren(open, clear)
+  if (n >= MAX_COMPARE) {
+    const warn = document.createElement('small')
+    warn.className = 'compare-warn'
+    warn.textContent = 'Maximal 3 Modelle vergleichbar \u2014 zuerst eine Auswahl aufheben.'
+    bar.appendChild(warn)
+  }
+}
+
+const COMPARE_ROWS = [
+  ['Anbieter', 'provider'], ['Kontextl\xE4nge', 'ctx'], ['Eingabe / 1M', 'input'], ['Ausgabe / 1M', 'output'],
+  ['Modalit\xE4ten', 'modalities'], ['Tools', 'tools'], ['Reasoning', 'reasoning'],
+  ['Benchmark \xB7 Intelligenz', 'bi'], ['Benchmark \xB7 Coding', 'bc'], ['Benchmark \xB7 Agentic', 'ba'], ['Top-Benchmarks', 'details'],
+]
+const renderCompareView = () => {
+  const host = document.getElementById('compare-view')
+  if (!host) return
+  if (!compareOpen || selectedKeys.length < 2) { host.hidden = true; host.replaceChildren(); return }
+  const cols = selectedKeys.map((k) => offersData[k]).filter(Boolean)
+  if (cols.length < 2) { host.hidden = true; host.replaceChildren(); return }
+  // esc() an JEDEM dynamischen Wert: die Payloads liegen roh in data-offer
+  // (comparePayload esc()'t nicht mehr), deshalb muss die Tabelle hier
+  // maskieren \u2014 sonst waere ein Modellname wie a<b ein XSS-Vektor. Die
+  // Zeilenlabels (row[0]) und "Eigenschaft" sind statische Literale.
+  const head = '<tr><th scope="col">Eigenschaft</th>' + cols.map((c) => '<th scope="col">' + esc(c.name) + '<br><small>' + esc(c.provider) + '</small></th>').join('') + '</tr>'
+  const body = COMPARE_ROWS.map((row) => '<tr><th scope="row">' + row[0] + '</th>' + cols.map((c) => '<td>' + esc(c[row[1]]) + '</td>').join('') + '</tr>').join('')
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.textContent = 'Schlie\xDFen'
+  close.setAttribute('aria-label', 'Vergleichsansicht schlie\xDFen')
+  close.addEventListener('click', () => { compareOpen = false; renderCompareView() })
+  const head2 = document.createElement('div')
+  head2.className = 'compare-head'
+  const h2 = document.createElement('h2')
+  h2.textContent = 'Modellvergleich'
+  head2.replaceChildren(h2, close)
+  const wrap = document.createElement('div')
+  wrap.className = 'compare-table-wrap'
+  wrap.innerHTML = '<table class="compare-table" aria-label="Modellvergleich"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>'
+  host.hidden = false
+  host.replaceChildren(head2, wrap)
+}
+
+const applyCompare = () => {
+  document.querySelectorAll('[data-compare-toggle]').forEach((btn) => {
+    const on = selectedKeys.includes(btn.dataset.offerKey)
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false')
+    const row = btn.closest('[data-model]')
+    if (row) row.classList.toggle('selected', on)
+  })
+  renderCompareBar()
+  if (compareOpen) renderCompareView()
+}
+applyCompare()
 
 // --- Modelle-Tabelle: Filter -> Sortieren -> Paginieren ---------------------
 // Bei hunderten OpenRouter-Modellen wuerde ein input-Event pro Tastendruck
@@ -722,6 +841,11 @@ const replaceFragment = (id, html) => {
   const pageTop = window.scrollY
   host.innerHTML = html
   bindActions(host)
+  // Modellvergleich: die Vergleichs-Buttons liegen im models-Fragment und
+  // werden mit dem Tausch verworfen. Nur fuer das models-Fragment neu binden
+  // und die Auswahl-Zustaende wiederherstellen (Leiste/Ansicht stehen
+  // ausserhalb des Fragments und ueberleben den Tausch unveraendert).
+  if (id === 'models') { bindCompareToggles(host); applyCompare() }
   host.querySelectorAll('details[data-key]').forEach((item) => { if (open.has(item.dataset.key)) item.open = true })
   if (wrap) wrap.scrollTop = wrapTop
   window.scrollTo(0, pageTop)
@@ -769,6 +893,7 @@ var CSS = `
 @media(max-width:700px){.topbar{gap:12px;overflow-x:auto}.topbar nav{gap:12px}.dashboard{grid-template-columns:1fr}.insight{display:block}.insight strong{display:block}.rank-columns,.connection-grid{grid-template-columns:1fr}.rank-columns{padding-left:0}.filters,.account-metrics{grid-template-columns:1fr}.agent-row{grid-template-columns:1fr;gap:5px}.agent-identity{justify-content:space-between}.agent-result{text-align:left}.managed-key{grid-template-columns:1fr auto}.managed-key>div{display:none}.managed-key>.key-name{display:block}.account-provider-section>header{align-items:flex-start}.account-summary{display:block}.account-summary .status{display:block;max-width:none;margin-top:4px;text-align:left}.managed-keys>header span{display:none}}@media(min-width:1051px){.dashboard{grid-template-columns:2fr 1fr 1fr}.dashboard .history-card{grid-column:1/-1}}
 .pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0 4px}.pagination[hidden]{display:none}.pagination span{color:var(--muted)}.pagination button:disabled{opacity:.5;cursor:default}#models thead th[data-sort]{cursor:pointer}#models thead th[data-sort]:hover{color:var(--violet)}
 #models .favorite{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:6px;padding:0;border:0;background:none;color:var(--muted);font-size:1.05em;line-height:1;cursor:pointer}#models .favorite[aria-pressed="true"]{color:var(--yellow)}#models .favorite:hover{color:var(--violet)}#models #favorites-only[aria-pressed="true"]{color:var(--yellow);border-color:var(--yellow)}
+#models .compare{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:6px;padding:0;border:0;background:none;color:var(--muted);font-size:1.05em;line-height:1;cursor:pointer}#models .compare[aria-pressed="true"]{color:var(--violet)}#models .compare:hover{color:var(--violet)}#models tr.selected{background:color-mix(in srgb,var(--violet) 10%,transparent)}#compare-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:8px 0}#compare-bar[hidden]{display:none}#compare-bar .compare-warn{color:var(--yellow);flex-basis:100%}#compare-view[hidden]{display:none}.compare-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px}.compare-table-wrap{overflow-x:auto}.compare-table{border-collapse:collapse;width:100%}.compare-table th,.compare-table td{border:1px solid var(--vscode-panel-border);padding:6px 10px;text-align:left;vertical-align:top}.compare-table thead th small{color:var(--muted);font-weight:400}.compare-table tbody th{font-weight:600;white-space:nowrap;color:var(--muted)}
 `;
 
 // src/panel/views/models.ts
@@ -819,34 +944,34 @@ function tierDetails(offer) {
   ];
   return `<details class="tier-details" data-key="tier-${esc(offer.id)}"><summary>${tiers.length + 1} Preisstufen</summary>${rows.map((row) => `<article>${row}</article>`).join("")}</details>`;
 }
+var BENCHMARK_DETAIL_LABELS = {
+  gpqa_diamond: "GPQA Diamond",
+  tau_bench_verified_airline: "\u03C4\xB2-Bench Airline",
+  search_browsecomp: "BrowseComp",
+  search_dsqa: "DeepSearchQA",
+  search_hle: "Search HLE",
+  search_widesearch: "WideSearch",
+  arena_codecategories: "Arena \xB7 Code",
+  arena_website: "Arena \xB7 Website",
+  arena_uicomponent: "Arena \xB7 UI-Komponenten",
+  arena_dataviz: "Arena \xB7 Datenvisualisierung",
+  arena_svg: "Arena \xB7 SVG",
+  arena_gamedev: "Arena \xB7 Spiele",
+  arena_3d: "Arena \xB7 3D",
+  arena_asciiart: "Arena \xB7 ASCII-Art",
+  arena_graphicdesign: "Arena \xB7 Grafikdesign",
+  arena_logo: "Arena \xB7 Logo",
+  arena_image: "Arena \xB7 Bild",
+  arena_imageediting: "Arena \xB7 Bildbearbeitung"
+};
 function benchmarkCell(offer) {
   const scores = offer.benchmarks;
   if (!scores) return `<div class="benchmark benchmark-missing"><strong>Keine Daten</strong><small>Noch nicht belastbar bewertet</small></div>`;
   const values = [["Intelligenz", scores.intelligence], ["Coding", scores.coding], ["Agentic", scores.agentic]].filter((item) => item[1] !== void 0);
   const provenance = scores.match === "base-model" ? "Identisches Basismodell" : scores.match === "local" ? "Lokaler Praxistest" : "\xD6ffentlich bewertet";
-  const detailLabel = {
-    gpqa_diamond: "GPQA Diamond",
-    tau_bench_verified_airline: "\u03C4\xB2-Bench Airline",
-    search_browsecomp: "BrowseComp",
-    search_dsqa: "DeepSearchQA",
-    search_hle: "Search HLE",
-    search_widesearch: "WideSearch",
-    arena_codecategories: "Arena \xB7 Code",
-    arena_website: "Arena \xB7 Website",
-    arena_uicomponent: "Arena \xB7 UI-Komponenten",
-    arena_dataviz: "Arena \xB7 Datenvisualisierung",
-    arena_svg: "Arena \xB7 SVG",
-    arena_gamedev: "Arena \xB7 Spiele",
-    arena_3d: "Arena \xB7 3D",
-    arena_asciiart: "Arena \xB7 ASCII-Art",
-    arena_graphicdesign: "Arena \xB7 Grafikdesign",
-    arena_logo: "Arena \xB7 Logo",
-    arena_image: "Arena \xB7 Bild",
-    arena_imageediting: "Arena \xB7 Bildbearbeitung"
-  };
-  const details = (scores.details ?? []).map((detail) => `<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>${detail.elo !== void 0 ? `<small>ELO ${esc(detail.elo)}</small>` : ""}${detail.sampleCount !== void 0 ? `<small>${esc(detail.sampleCount)} ${detail.elo !== void 0 ? "Duelle" : "Aufgaben"}</small>` : ""}${detail.costPerTaskUsd !== void 0 ? `<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>` : ""}</article>`).join("");
+  const details = (scores.details ?? []).map((detail) => `<article><strong>${esc(BENCHMARK_DETAIL_LABELS[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>${detail.elo !== void 0 ? `<small>ELO ${esc(detail.elo)}</small>` : ""}${detail.sampleCount !== void 0 ? `<small>${esc(detail.sampleCount)} ${detail.elo !== void 0 ? "Duelle" : "Aufgaben"}</small>` : ""}${detail.costPerTaskUsd !== void 0 ? `<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>` : ""}</article>`).join("");
   const singleValues = values.length === 0 && (scores.details ?? []).length > 0 ? [...scores.details ?? []].sort((a, b) => b.score - a.score).slice(0, 3) : [];
-  const valuesBlock = values.length > 0 ? values.map(([label, value]) => `<span><b>${label}</b> ${esc(value)}</span>`).join("") : singleValues.length > 0 ? `<span><b>Einzelwerte</b></span>${singleValues.map((detail) => `<span><b>${esc(detailLabel[detail.name] ?? detail.name)}</b> ${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>`).join("")}` : "";
+  const valuesBlock = values.length > 0 ? values.map(([label, value]) => `<span><b>${label}</b> ${esc(value)}</span>`).join("") : singleValues.length > 0 ? `<span><b>Einzelwerte</b></span>${singleValues.map((detail) => `<span><b>${esc(BENCHMARK_DETAIL_LABELS[detail.name] ?? detail.name)}</b> ${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(detail.score)} %</span>`).join("")}` : "";
   return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${valuesBlock}</div>${details ? `<details class="benchmark-details" data-key="bench-${esc(offer.id)}"><summary>${esc(scores.details?.length)} Einzelbenchmarks</summary>${details}</details>` : ""}<small>${provenance}</small></div>`;
 }
 function favoriteButton(offer, favorites) {
@@ -855,9 +980,37 @@ function favoriteButton(offer, favorites) {
   const label = isFavorite ? `${esc(offer.name)} aus Watchlist entfernen` : `${esc(offer.name)} in Watchlist aufnehmen`;
   return `<button class="favorite" data-action="toggle-favorite" data-offer-key="${esc(key)}" data-favorite="${isFavorite}" aria-label="${label}" aria-pressed="${isFavorite}">${isFavorite ? "\u2605" : "\u2606"}</button>`;
 }
+var providerLabel = (provider) => provider === "openrouter" ? "OpenRouter" : provider === "opencode-zen" ? "Zen" : "Go";
+function comparePayload(offer) {
+  const cap = offer.capabilities, b = offer.benchmarks;
+  const ctx = cap.contextLength === null ? "\u2014" : `${count(cap.contextLength)} Token`;
+  const modalities = `${cap.inputModalities.join(", ")} \u2192 ${cap.outputModalities.join(", ")}`;
+  const bi = b?.intelligence !== void 0 ? String(b.intelligence) : "\u2014";
+  const bc = b?.coding !== void 0 ? String(b.coding) : "\u2014";
+  const ba = b?.agentic !== void 0 ? String(b.agentic) : "\u2014";
+  const top = (b?.details ?? []).slice().sort((a, c) => c.score - a.score).slice(0, 2).map((d) => `${BENCHMARK_DETAIL_LABELS[d.name] ?? d.name}: ${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(d.score)} %`).join(" \xB7 ") || "\u2014";
+  return {
+    name: offer.name,
+    provider: providerLabel(offer.provider),
+    ctx,
+    input: priceCell(offer, "input"),
+    output: priceCell(offer, "output"),
+    modalities,
+    tools: cap.tools ? "ja" : "nein",
+    reasoning: cap.reasoning ? "ja" : "nein",
+    bi,
+    bc,
+    ba,
+    details: top
+  };
+}
+function compareButton(offer) {
+  const key = offerKey(offer);
+  return `<button class="compare" type="button" data-compare-toggle data-offer-key="${esc(key)}" data-offer="${esc(JSON.stringify(comparePayload(offer)))}" aria-pressed="false" aria-label="${esc(offer.name)} zum Vergleich ausw\xE4hlen">\u2696</button>`;
+}
 function modelRows(offers, favorites = []) {
   if (!offers.length) return `<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>`;
-  return offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer, "input")}" data-output="${priceSortValue(offer, "output")}" data-benchmark="${benchmarkSortValue(offer)}"><td>${favoriteButton(offer, favorites)}<strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden \u2014 Filter anpassen</td></tr>`;
+  return offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((offer) => `<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer, "input")}" data-output="${priceSortValue(offer, "output")}" data-benchmark="${benchmarkSortValue(offer)}"><td>${favoriteButton(offer, favorites)}${compareButton(offer)}<strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden \u2014 Filter anpassen</td></tr>`;
 }
 function modelFilters() {
   return `<div class="filters"><input id="search" placeholder="Modelle durchsuchen" aria-label="Modelle durchsuchen"><select id="provider" aria-label="Anbieter filtern"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="price" aria-label="Preis filtern"><option value="">Alle Preise</option><option value="free">Kostenlos</option><option value="paid">Kostenpflichtig</option><option value="unknown">Preis unbekannt</option></select><select id="purpose" aria-label="F\xE4higkeit filtern"><option value="">Alle F\xE4higkeiten</option>${Object.entries(labels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select><button type="button" id="favorites-only" data-testid="favorites-only" aria-pressed="false" aria-label="Nur Favoriten anzeigen">Nur Favoriten</button></div>`;
@@ -1016,7 +1169,7 @@ function panelHtml(state2) {
   const nonce = (0, import_crypto.randomBytes)(16).toString("base64"), view = prepare(state2);
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="content-security-policy" content="default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>${CSS}${BENCHMARK_CSS}</style></head><body><header class="topbar"><button class="brand" data-view="overview" aria-label="Preis-Watch \xDCbersicht">Preis-Watch</button><nav role="navigation" aria-label="Ansichten"><button data-view="overview" class="active" aria-current="page" aria-label="\xDCbersicht">\xDCbersicht</button><button data-view="models" aria-label="Modelle">Modelle</button><button data-view="agents" aria-label="Agenten">Agenten</button><button data-view="history" aria-label="Verlauf">Verlauf</button><button data-view="accounts" aria-label="Konten und Limits">Konten &amp; Limits</button></nav><span class="live-slot" data-fragment="live" role="status">${liveInner(view)}</span></header><main role="main">
   <section class="view" id="overview"><div class="metrics" data-fragment="metrics">${metricsInner(view)}</div><div class="attention" data-fragment="attention">${renderAttention(state2.attention)}</div><div class="insight" data-fragment="insight">${insightInner(view)}</div><div class="dashboard"><section class="card rankings" data-fragment="overview-ranks">${ranksInner(view)}</section><section class="card agents-card" data-fragment="overview-agents">${overviewAgentsInner(view)}</section><section class="card accounts-card" data-fragment="overview-accounts">${overviewAccountsInner(view)}</section><section class="card history-card" data-fragment="overview-history">${renderHistoryCard(state2.history)}</section></div></section>
-  <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${view.offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div class="table-wrap"><table aria-label="Modelle mit Preisen, F\xE4higkeiten und Benchmarks"><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th><th>Benchmark</th></tr></thead><tbody data-fragment="models">${modelRows(view.offers, view.favorites)}</tbody></table></div></section>
+  <section class="view" id="models" hidden><div class="page-head"><div><h1>Alle Modelle</h1><p>${view.offers.length} Angebote von OpenRouter, Zen und Go</p></div></div>${modelFilters()}<div id="compare-bar" data-compare-bar hidden></div><div class="table-wrap"><table aria-label="Modelle mit Preisen, F\xE4higkeiten und Benchmarks"><thead><tr><th>Modell</th><th>Anbieter</th><th>Input / 1M</th><th>Output / 1M</th><th>F\xE4higkeiten</th><th>Benchmark</th></tr></thead><tbody data-fragment="models">${modelRows(view.offers, view.favorites)}</tbody></table></div><div id="compare-view" data-compare-view hidden></div></section>
   <section class="view" id="agents" hidden><div class="page-head"><div><h1>Deine Agenten</h1><p>Nach Handlungsbedarf und Qualit\xE4t geordnet</p></div></div><div class="agent-groups" data-fragment="agents">${renderAgentGroups(view.assessments)}</div></section>
   <section class="view" id="history" hidden><div class="page-head"><div><h1>Preisverlauf</h1><p>\xC4nderungen der letzten 90 Tage</p></div></div>${historyFilters()}<div class="change-rows" data-fragment="history">${historyRows(state2.history)}</div></section>
   <section class="view" id="accounts" hidden><div class="page-head"><div><h1>Konten &amp; Limits</h1><p>Secrets bleiben ausschlie\xDFlich im lokalen VS Code Secret Store.</p></div></div><div class="provider-sections" data-fragment="accounts">${accountsInner(view)}</div></section></main><script nonce="${nonce}">${SCRIPT}</script></body></html>`;

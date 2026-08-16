@@ -6,6 +6,11 @@ export const SCRIPT = `
 const vscode = acquireVsCodeApi()
 const shown = {}
 
+// HTML-Maskierung fuer dynamische Werte, die per innerHTML eingesetzt werden
+// (z. B. die Vergleichstabelle). Entspricht esc() in src/panel/format.ts;
+// hier lokal im Skript, weil der Webview-Code keine gebuendelte Datei ist.
+const esc = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+
 // Verwirft VS Code das Webview — Tab lange im Hintergrund, Fenster neu geladen —,
 // baut es die Seite von vorn auf. retainContextWhenHidden hilft nur innerhalb
 // einer Sitzung, dieser Zustand ueberdauert sie.
@@ -49,6 +54,120 @@ const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((bu
   else vscode.postMessage({ type: button.dataset.action })
 }))
 bindActions(document)
+
+// --- Modellvergleich (Side-by-Side, rein lokal) ---------------------------
+// Der Vergleich ist ein reines Panel-Feature: keine Extension-Message, kein
+// Backend, kein save()/restore(). selectedKeys ist bewusst fluechtiger
+// Sitzungszustand — ein Neuaufbau des Webview verwirft ihn. Die Auswahl
+// ueberlebt dagegen Filter/Sortierung/Paginierung, weil sie auf dem
+// offerKey (provider:id) liegt und applyCompare nach jedem Fragment-Tausch
+// die aria-pressed-Zustaende und die .selected-Markierung neu traegt.
+// MAX_COMPARE=3: bei drei ausgewaehlten Modellen ist der Vergleich voll, der
+// Warn-Hinweis wird sichtbar und weitere Klicks auf nicht ausgewaehlte
+// Modelle werden ignoriert (zunaechst eine Auswahl aufheben). Diese "ignorieren"
+// -Regel ist die einfachere, klare Variante gegenuer dem automatischen
+// Verdraengen des aeltesten Modells.
+const MAX_COMPARE = 3
+const selectedKeys = []
+let compareOpen = false
+// offersData: offerKey -> Compare-Payload (aus data-offer der Buttons). Nach
+// jedem Fragment-Tausch neu befuellt, weil die Buttons verworfen/neu erzeugt
+// werden — die Payloads muessen immer frisch aus dem DOM gelesen werden.
+const offersData = {}
+
+const bindCompareToggles = (root) => root.querySelectorAll('[data-compare-toggle]').forEach((btn) => {
+  // try/catch: ein defekter/verstümmelter data-offer-Payload darf das Skript
+  // nicht zum Abbruch bringen — der betroffene Button wird übersprungen, die
+  // übrigen Vergleichs-Buttons funktionieren weiter.
+  try {
+    if (btn.dataset.offer) offersData[btn.dataset.offerKey] = JSON.parse(btn.dataset.offer)
+  } catch (e) { console.warn('compare payload unparseable', btn.dataset.offerKey, e) }
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.offerKey
+    const i = selectedKeys.indexOf(key)
+    if (i >= 0) selectedKeys.splice(i, 1)
+    else if (selectedKeys.length < MAX_COMPARE) selectedKeys.push(key)
+    // else: Maximum erreicht — Klick ignoriert; der Warn-Hinweis in der Leiste
+    // erklaert, warum nichts passiert. Kein automatisches Verdraengen.
+    applyCompare()
+  })
+})
+bindCompareToggles(document)
+
+const renderCompareBar = () => {
+  const bar = document.getElementById('compare-bar')
+  if (!bar) return
+  const n = selectedKeys.length
+  if (n === 0) { bar.hidden = true; bar.replaceChildren(); return }
+  bar.hidden = false
+  const open = document.createElement('button')
+  open.type = 'button'
+  const label = n + ' Modell' + (n === 1 ? '' : 'e') + ' vergleichen'
+  open.textContent = label
+  open.setAttribute('aria-label', label)
+  open.disabled = n < 2
+  open.title = n < 2 ? 'Mindestens 2 Modelle auswählen' : 'Vergleich öffnen'
+  open.addEventListener('click', () => { if (selectedKeys.length >= 2) { compareOpen = true; renderCompareView() } })
+  const clear = document.createElement('button')
+  clear.type = 'button'
+  clear.textContent = '✕'
+  clear.setAttribute('aria-label', 'Vergleichsauswahl leeren')
+  clear.title = 'Auswahl leeren'
+  clear.addEventListener('click', () => { selectedKeys.length = 0; applyCompare() })
+  bar.replaceChildren(open, clear)
+  if (n >= MAX_COMPARE) {
+    const warn = document.createElement('small')
+    warn.className = 'compare-warn'
+    warn.textContent = 'Maximal 3 Modelle vergleichbar — zuerst eine Auswahl aufheben.'
+    bar.appendChild(warn)
+  }
+}
+
+const COMPARE_ROWS = [
+  ['Anbieter', 'provider'], ['Kontextlänge', 'ctx'], ['Eingabe / 1M', 'input'], ['Ausgabe / 1M', 'output'],
+  ['Modalitäten', 'modalities'], ['Tools', 'tools'], ['Reasoning', 'reasoning'],
+  ['Benchmark · Intelligenz', 'bi'], ['Benchmark · Coding', 'bc'], ['Benchmark · Agentic', 'ba'], ['Top-Benchmarks', 'details'],
+]
+const renderCompareView = () => {
+  const host = document.getElementById('compare-view')
+  if (!host) return
+  if (!compareOpen || selectedKeys.length < 2) { host.hidden = true; host.replaceChildren(); return }
+  const cols = selectedKeys.map((k) => offersData[k]).filter(Boolean)
+  if (cols.length < 2) { host.hidden = true; host.replaceChildren(); return }
+  // esc() an JEDEM dynamischen Wert: die Payloads liegen roh in data-offer
+  // (comparePayload esc()'t nicht mehr), deshalb muss die Tabelle hier
+  // maskieren — sonst waere ein Modellname wie a<b ein XSS-Vektor. Die
+  // Zeilenlabels (row[0]) und "Eigenschaft" sind statische Literale.
+  const head = '<tr><th scope="col">Eigenschaft</th>' + cols.map((c) => '<th scope="col">' + esc(c.name) + '<br><small>' + esc(c.provider) + '</small></th>').join('') + '</tr>'
+  const body = COMPARE_ROWS.map((row) => '<tr><th scope="row">' + row[0] + '</th>' + cols.map((c) => '<td>' + esc(c[row[1]]) + '</td>').join('') + '</tr>').join('')
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.textContent = 'Schließen'
+  close.setAttribute('aria-label', 'Vergleichsansicht schließen')
+  close.addEventListener('click', () => { compareOpen = false; renderCompareView() })
+  const head2 = document.createElement('div')
+  head2.className = 'compare-head'
+  const h2 = document.createElement('h2')
+  h2.textContent = 'Modellvergleich'
+  head2.replaceChildren(h2, close)
+  const wrap = document.createElement('div')
+  wrap.className = 'compare-table-wrap'
+  wrap.innerHTML = '<table class="compare-table" aria-label="Modellvergleich"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>'
+  host.hidden = false
+  host.replaceChildren(head2, wrap)
+}
+
+const applyCompare = () => {
+  document.querySelectorAll('[data-compare-toggle]').forEach((btn) => {
+    const on = selectedKeys.includes(btn.dataset.offerKey)
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false')
+    const row = btn.closest('[data-model]')
+    if (row) row.classList.toggle('selected', on)
+  })
+  renderCompareBar()
+  if (compareOpen) renderCompareView()
+}
+applyCompare()
 
 // --- Modelle-Tabelle: Filter -> Sortieren -> Paginieren ---------------------
 // Bei hunderten OpenRouter-Modellen wuerde ein input-Event pro Tastendruck
@@ -208,6 +327,11 @@ const replaceFragment = (id, html) => {
   const pageTop = window.scrollY
   host.innerHTML = html
   bindActions(host)
+  // Modellvergleich: die Vergleichs-Buttons liegen im models-Fragment und
+  // werden mit dem Tausch verworfen. Nur fuer das models-Fragment neu binden
+  // und die Auswahl-Zustaende wiederherstellen (Leiste/Ansicht stehen
+  // ausserhalb des Fragments und ueberleben den Tausch unveraendert).
+  if (id === 'models') { bindCompareToggles(host); applyCompare() }
   host.querySelectorAll('details[data-key]').forEach((item) => { if (open.has(item.dataset.key)) item.open = true })
   if (wrap) wrap.scrollTop = wrapTop
   window.scrollTo(0, pageTop)

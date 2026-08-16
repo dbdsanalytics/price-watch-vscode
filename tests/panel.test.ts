@@ -631,3 +631,152 @@ test("haengt den offerKey nur an Nachrichten von Buttons mit data-offer-key an",
   // Der bisher gepruefte Substring bleibt bestehen (Regression auf Runde 2).
   expect(html).toContain("vscode.postMessage({ type: button.dataset.action })")
 })
+
+// Runde 8 + Escaping-Fix: Der Modellvergleich. Jede Modellzeile traegt in der
+// ersten Zelle (nach dem Stern-Button) einen Vergleichs-Button: <button
+// class="compare" type="button" data-compare-toggle ...>. data-offer-key
+// traegt exakt den offerKey (provider:id), data-offer die fertig formatierten
+// Vergleichswerte als JSON — bewusst KEIN data-action, damit bindActions()
+// den Button nicht als Extension-Nachricht behandelt.
+//
+// Seit dem Escaping-Fix enthaelt comparePayload ROHE Werte (kein esc() mehr):
+// Die Maskierung passiert getrennt an zwei Stellen — (a) beim Schreiben
+// sichert esc(JSON.stringify(payload)) das Attribut (die JSON-Schluessel
+// erscheinen als &quot;, ein rohes data-offer="{" darf nie auftauchen),
+// (b) beim Rendern esc()'t renderCompareView jeden Wert erneut (eigener
+// Test unten). Im Attribut steht deshalb GENAU EIN &amp; pro & des
+// Modellnamens — nie &amp;amp; (Doppel-Escaping wuerde auf ein esc() im
+// Payload selbst hindeuten).
+test("rendert je Modellzeile einen Vergleichs-Button mit maskiertem JSON-Payload", () => {
+  // Der Modellname mit & trennt die beiden Maskierungsebenen scharf: nur bei
+  // rohem Payload steht im Attribut &amp; (einmal esc), bei Payload-internem
+  // esc() stüende dort &amp;amp;.
+  const offer: any = { provider: "openrouter", id: "m", name: "M & Co", pricing: { input: 1, output: 2 },
+    capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: false, structuredOutput: false, reasoning: false, contextLength: 1000, purposes: ["coding"] } }
+  const rows = modelRows([offer])
+  // Button-Anfang: class, type und data-compare-toggle direkt hintereinander —
+  // kein data-action dazwischen, der Vergleich laeuft komplett im Webview.
+  expect(rows).toContain('<button class="compare" type="button" data-compare-toggle data-offer-key="openrouter:m" data-offer="')
+  // (a) Attribut-Maskierung: die JSON-Schluessel sind &quot;-maskiert, die
+  // Payload-Felder ctx und input sind im maskierten JSON-Text nachweisbar.
+  expect(rows).toContain('data-offer="{&quot;name&quot;:&quot;M &amp; Co&quot;')
+  expect(rows).toContain("&quot;ctx&quot;:&quot;1.000 Token&quot;")
+  expect(rows).toContain("&quot;input&quot;:&quot;1 $&quot;")
+  // Die JSON-Klammern { } bleiben unescaped, aber direkt nach dem { muss
+  // bereits &quot; folgen — ein rohes data-offer="{"name" wuerde das Attribut
+  // zerbrechen.
+  expect(rows).not.toContain('data-offer="{"name"')
+  // (b) Rohwerte im JSON-Payload: der Name liegt mit EINEM &amp; im Attribut
+  // (einmal esc), nie doppelt — &amp;amp; wuerde auf esc() im Payload selbst
+  // hindeuten.
+  expect(rows).not.toContain("&amp;amp;")
+  // Hart-Beweis fuer (b): Attributwert rueck-deskodiert und per JSON.parse
+  // gelesen — das Skript bekommt so den ROHEn Namen "M & Co", nicht "M &amp; Co".
+  const match = rows.match(/data-offer="([^"]*)"/)
+  expect(match).not.toBeNull()
+  const json = match![1].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&amp;/g, "&")
+  const payload = JSON.parse(json) as Record<string, string>
+  expect(payload.name).toBe("M & Co")
+  expect(payload.provider).toBe("OpenRouter")
+  expect(payload.ctx).toBe("1.000 Token")
+  // Button-Ende: gerenderter Grundzustand aria-pressed="false" plus Label
+  // (das Label esc()'t weiterhin wie ueblich).
+  expect(rows).toContain('aria-pressed="false" aria-label="M &amp; Co zum Vergleich auswählen">⚖</button>')
+  // Der Button ist Kind der ersten Zelle: nach dem Stern-Button, vor dem Namen.
+  expect(rows.indexOf('<button class="favorite"')).toBeLessThan(rows.indexOf('<button class="compare"'))
+  expect(rows.indexOf('<button class="compare"')).toBeLessThan(rows.indexOf("<strong>M &amp; Co</strong>"))
+})
+
+// Runde 8: Vergleichsleiste und Vergleichsansicht liegen als stabile Container
+// ausserhalb des models-Fragments (des tbody): der Fragment-Tausch ersetzt nur
+// den tbody-Inhalt, Leiste und Ansicht ueberleben unveraendert. Die Index-
+// Pruefung auf dem vollen panelHtml belegt die Position: compare-bar VOR dem
+// Fragment (zwischen Filterleiste und Tabelle), compare-view NACH der Tabelle.
+test("legt Vergleichsleiste und Vergleichsansicht ausserhalb des models-Fragments an", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
+  expect(html).toContain('<div id="compare-bar" data-compare-bar hidden></div>')
+  expect(html).toContain('<div id="compare-view" data-compare-view hidden></div>')
+  expect(html.indexOf('id="compare-bar"')).toBeLessThan(html.indexOf('data-fragment="models"'))
+  expect(html.indexOf('id="compare-view"')).toBeGreaterThan(html.indexOf('data-fragment="models"'))
+})
+
+// Runde 8, Skript: Der Modellvergleich lebt komplett im Webview. MAX_COMPARE=3
+// begrenzt die Auswahl; bei voller Auswahl wird der Warn-Hinweis sichtbar und
+// weitere Klicks auf nicht ausgewaehlte Modelle werden ignoriert. Die Leiste
+// erscheint ab einer Auswahl, der Oeffnen-Button ist unter zwei Auswahlen
+// deaktiviert (title erklaert warum), ✕ leert die Auswahl. COMPARE_ROWS fuehrt
+// die Zeilen der Vergleichstabelle: Anbieter, Kontextlaenge, Preise,
+// Modalitaeten, Tools, Reasoning und die Benchmark-Dimensionen.
+test("bettet den Modellvergleich (MAX 3, Leiste, Warn-Hinweis, COMPARE_ROWS) ins Skript ein", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
+  // Begrenzung und Bindungslogik: Klicks wandern ueber [data-compare-toggle].
+  expect(html).toContain("const MAX_COMPARE = 3")
+  expect(html).toContain("const selectedKeys = []")
+  expect(html).toContain("root.querySelectorAll('[data-compare-toggle]')")
+  // Volle Auswahl: weitere Klicks werden ignoriert (kein Verdraengen), der
+  // Warn-Hinweis in der Leiste erklaert den Zustand.
+  expect(html).toContain("else if (selectedKeys.length < MAX_COMPARE) selectedKeys.push(key)")
+  expect(html).toContain("'Maximal 3 Modelle vergleichbar — zuerst eine Auswahl aufheben.'")
+  // Leiste ab einer Auswahl, Oeffnen erst ab zwei, ✕ leert die Auswahl.
+  expect(html).toContain("if (n === 0) { bar.hidden = true; bar.replaceChildren(); return }")
+  expect(html).toContain("open.disabled = n < 2")
+  expect(html).toContain("open.title = n < 2 ? 'Mindestens 2 Modelle auswählen' : 'Vergleich öffnen'")
+  expect(html).toContain("clear.setAttribute('aria-label', 'Vergleichsauswahl leeren')")
+  // COMPARE_ROWS mit den exakten Zeilenanfuehrungen: Kontextlaenge (ctx) und
+  // die Top-Benchmarks (details) als Anker der Zeilenliste.
+  expect(html).toContain("['Kontextlänge', 'ctx']")
+  expect(html).toContain("['Top-Benchmarks', 'details']")
+  // Die Vergleichstabelle ist eine eigene Tabelle mit Label; Schliessen blendet
+  // nur die Ansicht aus, die Auswahl (selectedKeys) bleibt erhalten.
+  expect(html).toContain('<table class="compare-table" aria-label="Modellvergleich">')
+  expect(html).toContain("close.addEventListener('click', () => { compareOpen = false; renderCompareView() })")
+})
+
+// Runde 8 + Escaping-Fix: Die Vergleichstabelle fuellt renderCompareView aus
+// den ROHEn data-offer-Payloads (comparePayload esc()'t nicht mehr) — deshalb
+// esc()'t das Skript JEDEN dynamischen Wert beim Einfuegen: c.name und
+// c.provider im Kopf, c[row[1]] in jeder Zeile. Nur so bleibt ein Modellname
+// wie "a<b" ein harmloser Text statt ein XSS-Vektor. Parallel ist der
+// Payload-Parse in bindCompareToggles abgesichert: JSON.parse liegt in
+// try/catch, ein defekter/verstümmelter data-offer-Wert ruft console.warn
+// und bricht das Skript nicht ab.
+test("sichert die Vergleichstabelle ab: esc() an allen dynamischen Werten und try/catch um den Payload-Parse", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
+  // Kopf: beide dynamischen Werte der Spalte sind esc()'t.
+  expect(html).toContain("+ esc(c.name) +")
+  expect(html).toContain("+ esc(c.provider) +")
+  // Zeilenkoerper: jeder Zellwert c[row[1]] ist esc()'t.
+  expect(html).toContain("+ esc(c[row[1]]) +")
+  // Die alte ungesicherte Form (rohe Konkatenation ohne esc) existiert nicht mehr.
+  expect(html).not.toContain("+ c.name + '<br><small>' + c.provider +")
+  // JSON.parse liegt in try/catch — try { und catch kommen im Skript genau
+  // einmal vor (eindeutige Zuordnung); console.warn meldet den Fehler samt
+  // offerKey, statt das Skript abbrechen zu lassen.
+  expect(html).toContain("try {")
+  expect(html).toContain("offersData[btn.dataset.offerKey] = JSON.parse(btn.dataset.offer)")
+  expect(html).toContain("} catch (e) { console.warn('compare payload unparseable', btn.dataset.offerKey, e) }")
+})
+
+// Runde 8: Der Vergleichszustand lebt auf dem offerKey und wird nach jedem
+// models-Fragment-Tausch wiederhergestellt — die Buttons liegen im Fragment
+// und werden mit dem Tausch verworfen. replaceFragment bindet deshalb fuer
+// das models-Fragment die Toggles neu und ruft applyCompare: das setzt
+// aria-pressed und die .selected-Markierung aus selectedKeys und pflegt
+// Leiste/Ansicht (die ausserhalb des Fragments liegen und den Tausch
+// ueberleben).
+test("bindet Vergleichs-Buttons nach dem models-Fragment-Tausch neu und stellt die Auswahl wieder her", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0, favorites: [] })
+  // Neubindung NUR fuer das models-Fragment und NACH dem Ersetzen des Inhalts
+  // (der Tausch verwirft die alten Elemente samt Listener).
+  expect(html).toContain("if (id === 'models') { bindCompareToggles(host); applyCompare() }")
+  expect(html.indexOf("bindCompareToggles(host)")).toBeGreaterThan(html.indexOf("host.innerHTML = html"))
+  // applyCompare traegt aria-pressed und die .selected-Zeilenmarkierung nach.
+  expect(html).toContain("btn.setAttribute('aria-pressed', on ? 'true' : 'false')")
+  expect(html).toContain("row.classList.toggle('selected', on)")
+  // Die Payloads werden frisch aus dem DOM gelesen (data-offer -> JSON.parse),
+  // weil die getauschten Buttons ihre alten Payloads mitnehmen. Der Parse ist
+  // try/catch-abgesichert: ein defekter Payload meldet console.warn statt das
+  // Skript abbrechen zu lassen.
+  expect(html).toContain("offersData[btn.dataset.offerKey] = JSON.parse(btn.dataset.offer)")
+  expect(html).toContain("} catch (e) { console.warn('compare payload unparseable', btn.dataset.offerKey, e) }")
+})

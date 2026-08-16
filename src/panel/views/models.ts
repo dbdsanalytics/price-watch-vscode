@@ -50,14 +50,18 @@ export function tierDetails(offer: ModelOffer): string {
     ...tiers.map((tier) => `${esc(tier.label)} · ${esc(money(tier.input))} / ${esc(money(tier.output))}`)]
   return `<details class="tier-details" data-key="tier-${esc(offer.id)}"><summary>${tiers.length + 1} Preisstufen</summary>${rows.map((row) => `<article>${row}</article>`).join("")}</details>`
 }
+// Einzel-Benchmark-Labels, zentral gefuehrt, damit benchmarkCell und der
+// Modellvergleich (comparePayload) dieselben Bezeichnungen zeigen — ohne
+// Duplikat driftet eine der beiden Stellen irgendwann auseinander.
+const BENCHMARK_DETAIL_LABELS: Record<string, string> = { gpqa_diamond:"GPQA Diamond", tau_bench_verified_airline:"τ²-Bench Airline", search_browsecomp:"BrowseComp", search_dsqa:"DeepSearchQA", search_hle:"Search HLE", search_widesearch:"WideSearch",
+  arena_codecategories:"Arena · Code", arena_website:"Arena · Website", arena_uicomponent:"Arena · UI-Komponenten", arena_dataviz:"Arena · Datenvisualisierung", arena_svg:"Arena · SVG", arena_gamedev:"Arena · Spiele", arena_3d:"Arena · 3D", arena_asciiart:"Arena · ASCII-Art", arena_graphicdesign:"Arena · Grafikdesign", arena_logo:"Arena · Logo", arena_image:"Arena · Bild", arena_imageediting:"Arena · Bildbearbeitung" }
+
 export function benchmarkCell(offer: ModelOffer): string {
   const scores = offer.benchmarks
   if (!scores) return `<div class="benchmark benchmark-missing"><strong>Keine Daten</strong><small>Noch nicht belastbar bewertet</small></div>`
   const values = [["Intelligenz",scores.intelligence],["Coding",scores.coding],["Agentic",scores.agentic]].filter((item):item is [string,number]=>item[1]!==undefined)
   const provenance = scores.match === "base-model" ? "Identisches Basismodell" : scores.match === "local" ? "Lokaler Praxistest" : "Öffentlich bewertet"
-  const detailLabel:Record<string,string>={ gpqa_diamond:"GPQA Diamond", tau_bench_verified_airline:"τ²-Bench Airline", search_browsecomp:"BrowseComp", search_dsqa:"DeepSearchQA", search_hle:"Search HLE", search_widesearch:"WideSearch",
-    arena_codecategories:"Arena · Code", arena_website:"Arena · Website", arena_uicomponent:"Arena · UI-Komponenten", arena_dataviz:"Arena · Datenvisualisierung", arena_svg:"Arena · SVG", arena_gamedev:"Arena · Spiele", arena_3d:"Arena · 3D", arena_asciiart:"Arena · ASCII-Art", arena_graphicdesign:"Arena · Grafikdesign", arena_logo:"Arena · Logo", arena_image:"Arena · Bild", arena_imageediting:"Arena · Bildbearbeitung" }
-  const details=(scores.details ?? []).map((detail)=>`<article><strong>${esc(detailLabel[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE",{ maximumFractionDigits:1 }).format(detail.score)} %</span>${detail.elo!==undefined?`<small>ELO ${esc(detail.elo)}</small>`:""}${detail.sampleCount!==undefined?`<small>${esc(detail.sampleCount)} ${detail.elo!==undefined?"Duelle":"Aufgaben"}</small>`:""}${detail.costPerTaskUsd!==undefined?`<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>`:""}</article>`).join("")
+  const details=(scores.details ?? []).map((detail)=>`<article><strong>${esc(BENCHMARK_DETAIL_LABELS[detail.name] ?? detail.name)}</strong><span>${new Intl.NumberFormat("de-DE",{ maximumFractionDigits:1 }).format(detail.score)} %</span>${detail.elo!==undefined?`<small>ELO ${esc(detail.elo)}</small>`:""}${detail.sampleCount!==undefined?`<small>${esc(detail.sampleCount)} ${detail.elo!==undefined?"Duelle":"Aufgaben"}</small>`:""}${detail.costPerTaskUsd!==undefined?`<small>${money(detail.costPerTaskUsd)}/Aufgabe</small>`:""}</article>`).join("")
   // Aggregierte Scores fehlen noch (Backend aggregiert details→Scores), aber
   // Einzelwerte liegen vor: zeige die aussagekraeftigsten sichtbar, statt die
   // Zelle leer zu lassen. Sobald Scores vorhanden sind, gelten diese wie bisher.
@@ -67,7 +71,7 @@ export function benchmarkCell(offer: ModelOffer): string {
   const valuesBlock = values.length > 0
     ? values.map(([label,value])=>`<span><b>${label}</b> ${esc(value)}</span>`).join("")
     : singleValues.length > 0
-      ? `<span><b>Einzelwerte</b></span>${singleValues.map((detail)=>`<span><b>${esc(detailLabel[detail.name] ?? detail.name)}</b> ${new Intl.NumberFormat("de-DE",{ maximumFractionDigits:1 }).format(detail.score)} %</span>`).join("")}`
+      ? `<span><b>Einzelwerte</b></span>${singleValues.map((detail)=>`<span><b>${esc(BENCHMARK_DETAIL_LABELS[detail.name] ?? detail.name)}</b> ${new Intl.NumberFormat("de-DE",{ maximumFractionDigits:1 }).format(detail.score)} %</span>`).join("")}`
       : ""
   return `<div class="benchmark benchmark-${scores.match ?? "direct"}"><div>${valuesBlock}</div>${details?`<details class="benchmark-details" data-key="bench-${esc(offer.id)}"><summary>${esc(scores.details?.length)} Einzelbenchmarks</summary>${details}</details>`:""}<small>${provenance}</small></div>`
 }
@@ -91,13 +95,59 @@ function favoriteButton(offer: ModelOffer, favorites: string[]): string {
   return `<button class="favorite" data-action="toggle-favorite" data-offer-key="${esc(key)}" data-favorite="${isFavorite}" aria-label="${label}" aria-pressed="${isFavorite}">${isFavorite ? "★" : "☆"}</button>`
 }
 
+// Modellvergleich (Recherche-Soll-Feature Nr. 3): Der Vergleich ist ein
+// rein lokales Panel-Feature — KEINE Extension-Message, KEIN Backend, KEIN
+// neues save()/restore(). Die Auswahl ist bewusst fluechtig (Sitzungszustand).
+// Damit der Skript-Code die Vergleichstabelle allein aus dem DOM fuellen kann,
+// legt jeder Vergleichs-Button die noetigen Bestandsdaten als JSON in
+// data-offer ab (rohe Werte, de-DE-formatiert wie der Rest; esc() nur einmal
+// am Attribut als Ganzes). Der Button traegt KEIN data-action, damit er nicht in bindActions() landet und
+// keine postMessage absetzt — das Umschalten laeuft vollstaendig im Webview.
+//
+// Das <tr>-Attributgefuege bleibt unangetastet (Panel-Tests pruefen die Folge
+// bis data-benchmark); der Vergleichs-Button ist wie der Stern-Button ein
+// Kind der ersten Zelle. aria-pressed="false" ist der gerenderte Grundzustand;
+// das Skript traegt den Live-Zustand (selectedKeys) nach jedem Fragment-Tausch
+// erneut ein (applyCompare).
+const providerLabel = (provider: ModelOffer["provider"]): string => provider === "openrouter" ? "OpenRouter" : provider === "opencode-zen" ? "Zen" : "Go"
+
+// comparePayload liefert bewusst ROHE Werte (kein esc()): das data-offer-
+// Attribut esc()'t das JSON als Ganzes (siehe compareButton), und
+// renderCompareView im Skript esc()'t jeden Wert beim Einfügen in die
+// Vergleichstabelle. Wuerde comparePayload selbst schon esc()'n, entstuende
+// doppeltes Escaping — die Werte wuerden im Attribut zu &amp;amp; und in der
+// Tabelle als &amp;/&quot; sichtbar. Single Responsibility: Payload = Daten,
+// Attribut/Render = Maskierung.
+function comparePayload(offer: ModelOffer): Record<string, string> {
+  const cap = offer.capabilities, b = offer.benchmarks
+  const ctx = cap.contextLength === null ? "—" : `${count(cap.contextLength)} Token`
+  const modalities = `${cap.inputModalities.join(", ")} → ${cap.outputModalities.join(", ")}`
+  const bi = b?.intelligence !== undefined ? String(b.intelligence) : "—"
+  const bc = b?.coding !== undefined ? String(b.coding) : "—"
+  const ba = b?.agentic !== undefined ? String(b.agentic) : "—"
+  const top = (b?.details ?? []).slice().sort((a, c) => c.score - a.score).slice(0, 2)
+    .map((d) => `${BENCHMARK_DETAIL_LABELS[d.name] ?? d.name}: ${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(d.score)} %`).join(" · ") || "—"
+  return {
+    name: offer.name, provider: providerLabel(offer.provider), ctx, input: priceCell(offer, "input"), output: priceCell(offer, "output"),
+    modalities, tools: cap.tools ? "ja" : "nein", reasoning: cap.reasoning ? "ja" : "nein", bi, bc, ba, details: top,
+  }
+}
+
+function compareButton(offer: ModelOffer): string {
+  const key = offerKey(offer)
+  // aria-pressed=false ist der gerenderte Grundzustand; das Skript setzt den
+  // Live-Zustand nach jedem Fragment-Tausch (applyCompare). Das Label bleibt
+  // statisch "zum Vergleich auswählen", weil der Zustand nur im Skript lebt.
+  return `<button class="compare" type="button" data-compare-toggle data-offer-key="${esc(key)}" data-offer="${esc(JSON.stringify(comparePayload(offer)))}" aria-pressed="false" aria-label="${esc(offer.name)} zum Vergleich auswählen">⚖</button>`
+}
+
 /** Der innere Inhalt von <tbody> — das Fragment, das bei Preisaenderungen tauscht. */
 export function modelRows(offers: ModelOffer[], favorites: string[] = []): string {
   if (!offers.length) return `<tr class="empty-state"><td colspan="6">Noch keine Angebote geladen</td></tr>`
   // Die zweite Empty-Zeile liegt verdeckt bereit und wird vom Filter im
   // Script sichtbar geschaltet, sobald keine Modellzeile mehr matched —
   // statt die Tabelle einfach leer zu lassen.
-  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer,"input")}" data-output="${priceSortValue(offer,"output")}" data-benchmark="${benchmarkSortValue(offer)}"><td>${favoriteButton(offer, favorites)}<strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>`
+  return offers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((offer)=>`<tr data-model="${esc(`${offer.name} ${offer.provider} ${offer.capabilities.purposes.join(" ")}`.toLowerCase())}" data-name="${esc(offer.name)}" data-provider="${offer.provider}" data-price="${priceClass(offer)}" data-input="${priceSortValue(offer,"input")}" data-output="${priceSortValue(offer,"output")}" data-benchmark="${benchmarkSortValue(offer)}"><td>${favoriteButton(offer, favorites)}${compareButton(offer)}<strong>${esc(offer.name)}</strong><small>${esc(offer.id)}</small>${quotaLine(offer)}</td><td>${providerBadge(offer.provider)}</td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "input"))}</span></td><td><span class="price price-${priceClass(offer)}">${esc(priceCell(offer, "output"))}</span>${tierDetails(offer)}</td><td><div class="capabilities">${offer.capabilities.purposes.map(purposeBadge).join("")}</div></td><td>${benchmarkCell(offer)}</td></tr>`).join("") + `<tr class="empty-state" data-empty-filter hidden><td colspan="6">Keine Modelle gefunden — Filter anpassen</td></tr>`
 }
 
 /** Die Bedienelemente liegen ausserhalb der Fragmente und ueberleben jeden Tausch. */
