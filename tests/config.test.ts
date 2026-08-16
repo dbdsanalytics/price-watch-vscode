@@ -11,6 +11,22 @@ describe("extension manifest", () => {
     })
   })
 
+  // Das Manifest verweist auf media/icon.png; erst der Dateitest faengt ein
+  // fehlendes oder korruptes Icon. PNG-Kopfdaten: Signatur (8 Bytes), dann
+  // IHDR-Komplex mit Breite (Offset 16), Hoehe (Offset 20), Bittiefe (24) und
+  // Farbtyp (25) — 6 bedeutet RGBA.
+  test("icon file exists as a 128x128 RGBA PNG", async () => {
+    const icon = Bun.file(new URL("../media/icon.png", import.meta.url))
+    expect(await icon.exists()).toBe(true)
+    const bytes = new Uint8Array(await icon.arrayBuffer())
+    expect(Array.from(bytes.slice(0, 8))).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const view = new DataView(bytes.buffer)
+    expect(view.getUint32(16)).toBe(128)
+    expect(view.getUint32(20)).toBe(128)
+    expect(bytes[24]).toBe(8)
+    expect(bytes[25]).toBe(6)
+  })
+
   test("declares a separate OpenRouter management connection command", () => {
     expect(manifest.contributes.commands).toContainEqual({
       command: "priceWatch.connectOpenRouterManagement",

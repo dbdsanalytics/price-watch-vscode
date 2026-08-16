@@ -17,6 +17,41 @@ test("renders safe responsive four-view dashboard", () => {
   expect(html).not.toContain("-1000000")
 })
 
+// Das Dashboard schaltet ueber MediaQueries zwischen ein und drei Spalten um:
+// die Basisregel (auto-fit) gilt fuer schmale Fenster, Medium faellt auf zwei
+// Spalten zurueck, Wide zeigt drei Spalten und legt die Verlaufskarte in eine
+// eigene Bahn. Weil mediaBlock nur den Inhalt der passenden Klammer zurueckgibt,
+// steht eine Regel nur dann gruen, wenn sie wirklich in ihrer MediaQuery steht.
+function mediaBlock(html: string, query: string): string {
+  const marker = `@media(${query}){`
+  const start = html.indexOf(marker)
+  if (start < 0) return ""
+  let depth = 0
+  for (let i = start + marker.length; i < html.length; i++) {
+    if (html[i] === "{") depth++
+    else if (html[i] === "}") {
+      if (depth === 0) return html.slice(start + marker.length, i)
+      depth--
+    }
+  }
+  return ""
+}
+
+test("stuft das Dashboard ueber die MediaQueries ab", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  // Wide (ab 1051px): drei Spalten, die Verlaufskarte liegt in der eigenen Bahn.
+  expect(mediaBlock(html, "min-width:1051px")).toContain(".dashboard{grid-template-columns:2fr 1fr 1fr}")
+  expect(mediaBlock(html, "min-width:1051px")).toContain(".dashboard .history-card{grid-column:1/-1}")
+  // Medium (bis 1050px): zwei Spalten.
+  expect(mediaBlock(html, "max-width:1050px")).toContain(".dashboard{grid-template-columns:1.6fr 1fr}")
+  // Narrow (bis 700px): eine Spalte.
+  expect(mediaBlock(html, "max-width:700px")).toContain(".dashboard{grid-template-columns:1fr}")
+  // Kein Regellappen zwischen den Queries: Die Basisregel bleibt die einzige
+  // auto-fit-Regel, die Overrides stehen nur in ihren MediaQueries.
+  expect(mediaBlock(html, "min-width:1051px")).not.toContain("1.6fr")
+  expect(mediaBlock(html, "max-width:1050px")).not.toContain("2fr 1fr 1fr")
+})
+
 test("renders a semantic color system and structured agent and account sections", () => {
   const offer = (provider: "openrouter"|"opencode-zen"|"opencode-go", id: string, input: number, purposes: Array<"coding"|"language"|"reasoning"|"vision"|"tools"|"allround">) => ({ provider, id, name: id, pricing: { input, output: input }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: purposes.includes("tools"), structuredOutput: false, reasoning: purposes.includes("reasoning"), contextLength: 1000, purposes }, benchmarks: { coding: 90, intelligence: 80, source: "test", details:[{ name:"gpqa_diamond", score:94.2, costPerTaskUsd:.2, sampleCount:198, lastRunAt:"2026-08-01T08:00:00Z" }] } })
   const html = panelHtml({
