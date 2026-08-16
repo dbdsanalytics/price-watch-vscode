@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 – 2026-08-16
+
+- Isoliert Fehler beim Aktualisieren: Ein fehlgeschlagener Abruf hält den Rest nicht mehr auf, schlägt nach Retry mit Backoff fehl und maskiert Secrets in der Fehlermeldung, statt sie auszugeben.
+- Zeigt den Datenstand dynamisch als Live-Status (aktuell, veraltet, Fehler, Zeitfehler) und gestaltet die Leerzustände der Ansichten aus.
+- Erfüllt WCAG-AA-Kontraste auch in hellen Themes, damit die Oberfläche dort nicht mehr an Lesbarkeit verliert.
+- Ergänzt Buttons zum Trennen von Anbieterkonten und macht Buttons nach einem Fragment-Austausch zuverlässig klickbar statt taub.
+- Paginiert lange Modell-Listen, entprellt die Eingabe in der Suche und macht die Modell-Liste nach Spalten sortierbar.
+- Benachrichtigt bei Preisänderungen und niedrigem Guthaben über die neuen Benachrichtigungen (alerts), steuerbar über `priceWatch.enableAlerts`.
+- Ergänzt eine Modell-Watchlist, mit der ausgewählte Modelle als Favoriten erhalten bleiben.
+- Vergleicht zwei Modelle direkt nebeneinander (Side-by-side-Vergleich), statt nur die Einzelansicht zu zeigen.
+
 ## 0.3.1 – 2026-08-16
 
 - Bewertet Modelle mit Benchmark-Details jetzt mit Dimensions-Scores für Intelligence, Coding und Agentic statt als unrated; fehlen die Dimensionsdaten, zeigt die Modellansicht die einzelnen Werte als Fallback.
