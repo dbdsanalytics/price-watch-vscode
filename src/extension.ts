@@ -10,6 +10,7 @@ import { assessAgent } from "./agents/assessment"
 import type { AgentMetadata } from "./agents/discovery"
 import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
 import { collectAttention } from "./domain/attention"
+import { pickLowBalanceAlerts, pickPriceAlerts } from "./domain/alerts"
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
 import { mergeHistory, migrateLegacyState } from "./domain/history"
 import { carryForwardOffers, plausibilityWarning } from "./domain/snapshots"
@@ -21,6 +22,7 @@ import type { ProviderSnapshot } from "./domain/provider"
 import type { DashboardState } from "./domain/dashboard"
 import { sanitizeErrorText } from "./domain/sanitize"
 import { fragments, panelHtml } from "./panel/index"
+import { money } from "./panel/format"
 import { aiDashboardSummary, aiFailure } from "./ai"
 import { fetchAllProviders } from "./providers/fetch-all"
 import { fetchOpenCodeDocument, parseGoDocument, parseZenDocument, requireOffers } from "./providers/opencode-docs"
@@ -35,6 +37,11 @@ const HISTORY_KEY = "priceWatch.history.v3", SNAPSHOT_KEY = "priceWatch.snapshot
 const secretKey = (provider: string) => `priceWatch.account.${provider}`
 let panel: vscode.WebviewPanel | undefined, statusBar: vscode.StatusBarItem, running: Promise<void> | undefined
 let state: DashboardState = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 }
+// Wiederholungssperre für Alarme: Derselbe Alarmzustand wird nur einmal
+// gemeldet. Preis-IDs wechseln nur bei neuen Diffs (unveränderte Preise
+// erzeugen keine Changes), Konten nur bei einer echten Guthabenänderung.
+let lastPriceAlertIds = ""
+let lastBalanceAlertKey = ""
 
 function localAgents(): AgentMetadata[] {
   const readScope = (root: string, configNames: string[], fallbackModel = ""): { agents: AgentMetadata[]; defaultModel: string } => {
@@ -75,6 +82,41 @@ function recomputeAttention(): void {
   })
 }
 function updateStatus(): void { statusBar.text = `$(pulse) Preise ${state.snapshots.reduce((sum,s)=>sum+s.offers.length,0)} · ${state.history.length} Δ`; statusBar.tooltip = state.snapshots.map((s)=>`${s.provider}: ${s.error ? s.error.message : `${s.offers.length} Modelle`}`).join("\n"); statusBar.show() }
+
+const DIMENSION_LABELS: Record<PriceChange["dimension"], string> = { input: "Eingabe", output: "Ausgabe", cacheRead: "Cache-Lesen", cacheWrite: "Cache-Schreiben", request: "Anfrage" }
+// Pro Anlass genau eine gebündelte Meldung: Preisänderungen ab der eigenen
+// Schwelle (nicht die Aufmerksamkeits-Schwelle der Übersicht), Guthaben
+// verbundener Konten unter dem USD-Schwellwert. Spamfrei durch die
+// Wiederholungssperre oben und dadurch, dass diffOffers bei unverändertem
+// Zustand keine Changes liefert.
+function notifyAlerts(settings: vscode.WorkspaceConfiguration, changes: PriceChange[]): void {
+  const thresholdPercent = settings.get<number>("alertPricePercent", 20)
+  const priceAlerts = pickPriceAlerts(changes, thresholdPercent)
+  const priceKey = priceAlerts.map((change) => change.id).join("|")
+  if (priceAlerts.length && priceKey !== lastPriceAlertIds) {
+    const text = priceAlerts.length === 1
+      ? `Preisänderung ${priceAlerts[0].modelId} (${DIMENSION_LABELS[priceAlerts[0].dimension]}): ${money(priceAlerts[0].previous)} → ${money(priceAlerts[0].current)}`
+      : `${summarizeChanges(priceAlerts)} ≥ ${Math.abs(thresholdPercent)} %`
+    void vscode.window.showInformationMessage(`Preis-Watch: ${text}`)
+    // Key erst nach dem Toast: Wirft showInformationMessage, bleibt der Zustand
+    // ungesetzt und der Alarm kann beim naechsten Refresh erneut versuchen.
+    lastPriceAlertIds = priceKey
+  }
+  const balanceThreshold = settings.get<number>("alertLowBalanceUsd", 10)
+  const balanceAlerts = pickLowBalanceAlerts(state.accounts, balanceThreshold)
+  // Auf 2 Dezimalen gerundet, damit minimale Rundungsdifferenzen im Guthaben
+  // keinen Spurious-Re-Alert ausloesen. pickLowBalanceAlerts liefert nur Konten
+  // mit remainingUsd != null, daher ist ! sicher.
+  const balanceKey = balanceAlerts.map((account) => `${account.provider}:${account.remainingUsd!.toFixed(2)}`).join("|")
+  if (balanceAlerts.length && balanceKey !== lastBalanceAlertKey) {
+    const text = balanceAlerts.length === 1
+      ? `Guthaben ${balanceAlerts[0].provider} ${money(balanceAlerts[0].remainingUsd ?? 0)} unter ${money(balanceThreshold)}`
+      : `${balanceAlerts.length} Konten unter ${money(balanceThreshold)}: ${balanceAlerts.map((account) => `${account.provider} (${money(account.remainingUsd ?? 0)})`).join(", ")}`
+    void vscode.window.showInformationMessage(`Preis-Watch: ${text}`)
+    // Key erst nach dem Toast, siehe Preisblock oben.
+    lastBalanceAlertKey = balanceKey
+  }
+}
 
 async function refresh(context: vscode.ExtensionContext, manual: boolean): Promise<void> {
   if (running) return running
@@ -130,6 +172,9 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
       await context.globalState.update(HISTORY_KEY, state.history)
       await context.globalState.update(SNAPSHOT_KEY, snapshots)
       if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch öffnen?`, "Öffnen").then((choice)=>{ if (choice) void vscode.commands.executeCommand("priceWatch.open") })
+      // Nach Persistenz und nur auf Wunsch: proaktive Alarme aus dem aktuellen
+      // Diff (nicht aus der History) und dem Konto-Guthaben, gebündelt pro Anlass.
+      if (settings.get<boolean>("enableAlerts", false)) notifyAlerts(settings, changes)
       recomputeAttention(); updateStatus(); refreshPanel()
     } catch (error) {
       // Providerfehler fangen die Loader ab; was hier ankommt, sind Ausfaelle

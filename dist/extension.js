@@ -253,6 +253,16 @@ function collectAttention(input) {
   return items;
 }
 
+// src/domain/alerts.ts
+var MAX_PRICE_ALERTS = 5;
+function pickPriceAlerts(changes, thresholdPercent) {
+  const threshold = Math.abs(thresholdPercent);
+  return changes.filter((change) => change.percent !== null && Math.abs(change.percent) >= threshold).sort((a, b) => Math.abs(b.percent) - Math.abs(a.percent)).slice(0, MAX_PRICE_ALERTS);
+}
+function pickLowBalanceAlerts(accounts, thresholdUsd) {
+  return accounts.filter((account) => account.remainingUsd != null && account.remainingUsd < thresholdUsd);
+}
+
 // src/domain/model.ts
 function usdPerMillion(value) {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "");
@@ -1238,6 +1248,8 @@ var panel;
 var statusBar;
 var running;
 var state = { snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 };
+var lastPriceAlertIds = "";
+var lastBalanceAlertKey = "";
 function localAgents() {
   const readScope = (root, configNames, fallbackModel = "") => {
     let defaultModel = fallbackModel;
@@ -1281,6 +1293,25 @@ function updateStatus() {
   statusBar.text = `$(pulse) Preise ${state.snapshots.reduce((sum, s) => sum + s.offers.length, 0)} \xB7 ${state.history.length} \u0394`;
   statusBar.tooltip = state.snapshots.map((s) => `${s.provider}: ${s.error ? s.error.message : `${s.offers.length} Modelle`}`).join("\n");
   statusBar.show();
+}
+var DIMENSION_LABELS = { input: "Eingabe", output: "Ausgabe", cacheRead: "Cache-Lesen", cacheWrite: "Cache-Schreiben", request: "Anfrage" };
+function notifyAlerts(settings, changes) {
+  const thresholdPercent = settings.get("alertPricePercent", 20);
+  const priceAlerts = pickPriceAlerts(changes, thresholdPercent);
+  const priceKey = priceAlerts.map((change) => change.id).join("|");
+  if (priceAlerts.length && priceKey !== lastPriceAlertIds) {
+    const text = priceAlerts.length === 1 ? `Preis\xE4nderung ${priceAlerts[0].modelId} (${DIMENSION_LABELS[priceAlerts[0].dimension]}): ${money(priceAlerts[0].previous)} \u2192 ${money(priceAlerts[0].current)}` : `${summarizeChanges(priceAlerts)} \u2265 ${Math.abs(thresholdPercent)} %`;
+    void vscode.window.showInformationMessage(`Preis-Watch: ${text}`);
+    lastPriceAlertIds = priceKey;
+  }
+  const balanceThreshold = settings.get("alertLowBalanceUsd", 10);
+  const balanceAlerts = pickLowBalanceAlerts(state.accounts, balanceThreshold);
+  const balanceKey = balanceAlerts.map((account) => `${account.provider}:${account.remainingUsd.toFixed(2)}`).join("|");
+  if (balanceAlerts.length && balanceKey !== lastBalanceAlertKey) {
+    const text = balanceAlerts.length === 1 ? `Guthaben ${balanceAlerts[0].provider} ${money(balanceAlerts[0].remainingUsd ?? 0)} unter ${money(balanceThreshold)}` : `${balanceAlerts.length} Konten unter ${money(balanceThreshold)}: ${balanceAlerts.map((account) => `${account.provider} (${money(account.remainingUsd ?? 0)})`).join(", ")}`;
+    void vscode.window.showInformationMessage(`Preis-Watch: ${text}`);
+    lastBalanceAlertKey = balanceKey;
+  }
 }
 async function refresh(context, manual) {
   if (running) return running;
@@ -1334,6 +1365,7 @@ async function refresh(context, manual) {
       if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch \xF6ffnen?`, "\xD6ffnen").then((choice) => {
         if (choice) void vscode.commands.executeCommand("priceWatch.open");
       });
+      if (settings.get("enableAlerts", false)) notifyAlerts(settings, changes);
       recomputeAttention();
       updateStatus();
       refreshPanel();

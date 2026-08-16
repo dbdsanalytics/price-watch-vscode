@@ -34,6 +34,13 @@ describe("extension manifest", () => {
       category: "Preis-Watch",
     })
   })
+
+  test("declares the price alert settings with type and default", () => {
+    const properties = manifest.contributes.configuration.properties
+    expect(properties["priceWatch.enableAlerts"]).toMatchObject({ type: "boolean", default: false })
+    expect(properties["priceWatch.alertPricePercent"]).toMatchObject({ type: "number", default: 20 })
+    expect(properties["priceWatch.alertLowBalanceUsd"]).toMatchObject({ type: "number", default: 10 })
+  })
 })
 
 describe("stripJsoncComments", () => {

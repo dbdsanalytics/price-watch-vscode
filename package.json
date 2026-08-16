@@ -80,6 +80,21 @@
           "default": 20,
           "minimum": 1,
           "description": "Ab welcher Preisänderung in Prozent ein Hinweis in der Übersicht erscheint."
+        },
+        "priceWatch.enableAlerts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Benachrichtigungen zu Preisänderungen und niedrigem Guthaben aktivieren."
+        },
+        "priceWatch.alertPricePercent": {
+          "type": "number",
+          "default": 20,
+          "description": "Schwellwert (Prozent) für Preisänderungs-Alarme — unabhängig von der Aufmerksamkeits-Schwelle in der Übersicht."
+        },
+        "priceWatch.alertLowBalanceUsd": {
+          "type": "number",
+          "default": 10,
+          "description": "Schwellwert in USD, unter dem ein verbundenes Konto einen Benachrichtigungs-Alarm auslöst."
         }
       }
     }
