@@ -528,7 +528,13 @@ const show = (id) => {
   save()
 }
 document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => show(button.dataset.view)))
-document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
+// [data-action]-Buttons senden ihren Typ als Nachricht an die Extension. Der
+// Listener muss nach jedem Fragment-Tausch neu gebunden werden, weil
+// host.innerHTML = html die alten Elemente (mitsamt ihren Listenern) verwirft
+// und durch neue, ungebundene Elemente ersetzt. bindActions wird deshalb auch
+// in replaceFragment fuer den getauschten Host aufgerufen.
+const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
+bindActions(document)
 
 const applyFilter = () => {
   const q = search.value.toLowerCase(), p = provider.value, c = price.value, u = purpose.value
@@ -566,6 +572,7 @@ const replaceFragment = (id, html) => {
   const wrap = host.closest('.table-wrap'), wrapTop = wrap ? wrap.scrollTop : 0
   const pageTop = window.scrollY
   host.innerHTML = html
+  bindActions(host)
   host.querySelectorAll('details[data-key]').forEach((item) => { if (open.has(item.dataset.key)) item.open = true })
   if (wrap) wrap.scrollTop = wrapTop
   window.scrollTo(0, pageTop)
@@ -732,11 +739,11 @@ function renderManagedKey(key) {
 function renderOpenRouterSection(accounts, management) {
   const api = accounts.find((item) => item.provider === "openrouter");
   const managementAvailable = management?.state === "available";
-  return `<section class="account-provider-section provider-openrouter"><header><div><span class="provider-title"><i aria-hidden="true"></i>OpenRouter</span><p>API-Zugriff und kontoweite Verbrauchsdaten getrennt verwalten</p></div></header><div class="connection-grid"><article class="connection"><div class="connection-head"><div><h3>API-Key</h3><span>KI-Fazit und Status dieses Schl\xFCssels</span></div><button data-action="connect" aria-label="OpenRouter API-Key ${api ? "erneuern" : "verbinden"}">${api ? "Erneuern" : "Verbinden"}</button></div>${api ? renderAccountSummary(api) : `<p class="empty">Nicht verbunden</p>`}</article><article class="connection"><div class="connection-head"><div><h3>Management Key \xB7 Nur Lesen</h3><span>Guthaben und Verbrauch vorhandener Schl\xFCssel</span></div><button data-action="connect-management" aria-label="OpenRouter Management-Key ${management ? "erneuern" : "verbinden"}">${management ? "Erneuern" : "Verbinden"}</button></div>${management ? `<p class="management-state status-${management.state}">${esc(management.state === "available" ? "Verbunden" : management.message ?? "Nicht abrufbar")}</p>` : `<p class="empty">Nicht verbunden</p>`}</article></div>${managementAvailable ? `<div class="account-metrics">${metric(money(management.remainingCreditsUsd), "Verf\xFCgbar", "metric-good")}${metric(money(management.totalCreditsUsd), "Guthaben gekauft")}${metric(money(management.totalUsageUsd), "Gesamt verbraucht", "metric-warn")}${metric(String(management.keys.length), "API-Keys")}</div><div class="managed-keys"><header><h3>API-Key-Verbrauch</h3><span>Heute \xB7 Woche \xB7 Monat sind pro Schl\xFCssel verf\xFCgbar</span></header>${management.keys.map(renderManagedKey).join("")}</div>` : ""}</section>`;
+  return `<section class="account-provider-section provider-openrouter"><header><div><span class="provider-title"><i aria-hidden="true"></i>OpenRouter</span><p>API-Zugriff und kontoweite Verbrauchsdaten getrennt verwalten</p></div></header><div class="connection-grid"><article class="connection"><div class="connection-head"><div><h3>API-Key</h3><span>KI-Fazit und Status dieses Schl\xFCssels</span></div><button data-action="connect" aria-label="OpenRouter API-Key ${api ? "erneuern" : "verbinden"}">${api ? "Erneuern" : "Verbinden"}</button>${api ? `<button data-action="disconnect" aria-label="OpenRouter API-Key trennen">Trennen</button>` : ""}</div>${api ? renderAccountSummary(api) : `<p class="empty">Nicht verbunden</p>`}</article><article class="connection"><div class="connection-head"><div><h3>Management Key \xB7 Nur Lesen</h3><span>Guthaben und Verbrauch vorhandener Schl\xFCssel</span></div><button data-action="connect-management" aria-label="OpenRouter Management-Key ${management ? "erneuern" : "verbinden"}">${management ? "Erneuern" : "Verbinden"}</button>${management ? `<button data-action="disconnect-management" aria-label="OpenRouter Management-Key trennen">Trennen</button>` : ""}</div>${management ? `<p class="management-state status-${management.state}">${esc(management.state === "available" ? "Verbunden" : management.message ?? "Nicht abrufbar")}</p>` : `<p class="empty">Nicht verbunden</p>`}</article></div>${managementAvailable ? `<div class="account-metrics">${metric(money(management.remainingCreditsUsd), "Verf\xFCgbar", "metric-good")}${metric(money(management.totalCreditsUsd), "Guthaben gekauft")}${metric(money(management.totalUsageUsd), "Gesamt verbraucht", "metric-warn")}${metric(String(management.keys.length), "API-Keys")}</div><div class="managed-keys"><header><h3>API-Key-Verbrauch</h3><span>Heute \xB7 Woche \xB7 Monat sind pro Schl\xFCssel verf\xFCgbar</span></header>${management.keys.map(renderManagedKey).join("")}</div>` : ""}</section>`;
 }
 function renderProviderSection(provider, accounts) {
   const account = accounts.find((item) => item.provider === provider), name = provider === "opencode-zen" ? "OpenCode Zen" : "OpenCode Go";
-  return `<section class="account-provider-section provider-${provider}"><header><div><span class="provider-title"><i aria-hidden="true"></i>${name}</span><p>${provider === "opencode-zen" ? "Pay-as-you-go-Guthaben" : "Abo, Kontingent und Reset"}</p></div><button data-action="connect" aria-label="${name} ${account ? "erneuern" : "verbinden"}">${account ? "Erneuern" : "Verbinden"}</button></header>${account ? renderAccountSummary(account) : `<p class="empty">Nicht verbunden</p>`}</section>`;
+  return `<section class="account-provider-section provider-${provider}"><header><div><span class="provider-title"><i aria-hidden="true"></i>${name}</span><p>${provider === "opencode-zen" ? "Pay-as-you-go-Guthaben" : "Abo, Kontingent und Reset"}</p></div><button data-action="connect" aria-label="${name} ${account ? "erneuern" : "verbinden"}">${account ? "Erneuern" : "Verbinden"}</button>${account ? `<button data-action="disconnect" aria-label="${name} trennen">Trennen</button>` : ""}</header>${account ? renderAccountSummary(account) : `<p class="empty">Nicht verbunden</p>`}</section>`;
 }
 
 // src/panel/views/history.ts

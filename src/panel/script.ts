@@ -32,7 +32,13 @@ const show = (id) => {
   save()
 }
 document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => show(button.dataset.view)))
-document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
+// [data-action]-Buttons senden ihren Typ als Nachricht an die Extension. Der
+// Listener muss nach jedem Fragment-Tausch neu gebunden werden, weil
+// host.innerHTML = html die alten Elemente (mitsamt ihren Listenern) verwirft
+// und durch neue, ungebundene Elemente ersetzt. bindActions wird deshalb auch
+// in replaceFragment fuer den getauschten Host aufgerufen.
+const bindActions = (root) => root.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => vscode.postMessage({ type: button.dataset.action })))
+bindActions(document)
 
 const applyFilter = () => {
   const q = search.value.toLowerCase(), p = provider.value, c = price.value, u = purpose.value
@@ -70,6 +76,7 @@ const replaceFragment = (id, html) => {
   const wrap = host.closest('.table-wrap'), wrapTop = wrap ? wrap.scrollTop : 0
   const pageTop = window.scrollY
   host.innerHTML = html
+  bindActions(host)
   host.querySelectorAll('details[data-key]').forEach((item) => { if (open.has(item.dataset.key)) item.open = true })
   if (wrap) wrap.scrollTop = wrapTop
   window.scrollTo(0, pageTop)

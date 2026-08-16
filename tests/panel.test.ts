@@ -396,3 +396,56 @@ test("legt fuer helle VS-Code-Designs kontrastreiche Akzentfarben ueber die Dark
   // Position sichert die Regel zusaetzlich ab).
   expect(html.indexOf("body.vscode-light")).toBeGreaterThan(html.indexOf(":root{"))
 })
+
+// Runde 4: Ein verbundenes Konto zeigt neben dem Connect-Button einen
+// Trennen-Button — [data-action="disconnect"] fuer die API-Keys,
+// [data-action="disconnect-management"] fuer den OpenRouter Management-Key.
+// Geprueft werden vollstaendige <button>-Zeilen (nicht nur der Attributname,
+// der im CSS/JS-Text des panelHtml ohnehin unschaerfe wäre).
+test("zeigt bei verbundenen Konten je einen Trennen-Button mit aria-label", () => {
+  const html = panelHtml({
+    snapshots: [], history: [], agents: [], ai: null, updatedAt: 0,
+    accounts: [
+      { provider: "openrouter", state: "available", remainingUsd: 5, dailyUsd: 1, weeklyUsd: 4, monthlyUsd: 10 },
+      { provider: "opencode-zen", state: "available", message: "Verbunden" },
+      { provider: "opencode-go", state: "low", message: "Kontingent knapp" },
+    ],
+    openRouterManagement: { state: "available", totalCreditsUsd: 100, totalUsageUsd: 25, remainingCreditsUsd: 75, keys: [] },
+  })
+  // Beide Verbindungswege von OpenRouter: API-Key und Management-Key.
+  expect(html).toContain('<button data-action="disconnect" aria-label="OpenRouter API-Key trennen">Trennen</button>')
+  expect(html).toContain('<button data-action="disconnect-management" aria-label="OpenRouter Management-Key trennen">Trennen</button>')
+  // Auch die Anbieterkonten (Zen/Go) bekommen im verbundenen Zustand den Trennen-Button.
+  expect(html).toContain('<button data-action="disconnect" aria-label="OpenCode Zen trennen">Trennen</button>')
+  expect(html).toContain('<button data-action="disconnect" aria-label="OpenCode Go trennen">Trennen</button>')
+})
+
+// Negativprobe zum Runde-4-Verhalten: Nur verbundene Zustaende duerfen den
+// Trennen-Button tragen. Dieser Test schlaegt fehl, sobald die Buttons
+// unkonditional gerendert wuerden.
+test("zeigt bei nicht verbundenen Konten keinen Trennen-Button", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  expect(html).not.toContain('<button data-action="disconnect"')
+  expect(html).not.toContain('<button data-action="disconnect-management"')
+  // Der Connect-Button bleibt der einzige Weg — er heisst weiterhin "verbinden".
+  expect(html).toContain('<button data-action="connect" aria-label="OpenRouter API-Key verbinden">Verbinden</button>')
+  expect(html).toContain('<button data-action="connect-management" aria-label="OpenRouter Management-Key verbinden">Verbinden</button>')
+})
+
+// Runde-4-Refactoring in script.ts: [data-action]-Klicks laufen jetzt ueber
+// bindActions — initial fuer das Dokument und im replaceFragment direkt nach
+// host.innerHTML = html, weil der Tausch die alten Elemente samt Listenern
+// verwirft. Vorher blieben die Buttons nach dem Fragment-Tausch stumm.
+// Geprueft auf dem eingebetteten SCRIPT-Text des vollen panelHtml.
+test("bindet [data-action]-Buttons initial und nach jedem Fragment-Tausch neu", () => {
+  const html = panelHtml({ snapshots: [], history: [], agents: [], accounts: [], ai: null, updatedAt: 0 })
+  // Definition: bindActions klickt genau den [data-action]-Wert als Nachricht.
+  expect(html).toContain("const bindActions = (root) => root.querySelectorAll('[data-action]')")
+  expect(html).toContain("vscode.postMessage({ type: button.dataset.action })")
+  // Initiale Bindung fuer die beim Laden vorhandenen Buttons.
+  expect(html).toContain("bindActions(document)")
+  // Die Neubindung im Tauschpfad steht NACH dem Ersetzen des Inhalts: erst
+  // host.innerHTML = html, dann bindActions(host). Vorher wuerde die Bindung
+  // mit dem Tausch wieder verworfen.
+  expect(html.indexOf("bindActions(host)")).toBeGreaterThan(html.indexOf("host.innerHTML = html"))
+})
