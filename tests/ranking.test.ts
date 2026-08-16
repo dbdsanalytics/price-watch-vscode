@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { rankOffers } from "../src/domain/ranking"
+import { enrichProviderBenchmarks } from "../src/domain/benchmarks"
 import type { ModelOffer } from "../src/domain/model"
 
 const make = (id: string, price: number, coding?: number): ModelOffer => ({ provider: "openrouter", id, name: id, pricing: { input: price, output: price }, benchmarks: coding === undefined ? undefined : { source: "test", coding }, capabilities: { inputModalities: ["text"], outputModalities: ["text"], tools: true, structuredOutput: true, reasoning: true, contextLength: 128000, purposes: ["coding"] } })
@@ -24,4 +25,27 @@ test("excludes unknown-price and non-text offers from recommendations", () => {
   const unknown = { ...make("router", 0, 90), pricing: { input: 0, output: 0, unknown: true } }
   const image = { ...make("image", 0, 95), capabilities: { ...make("image", 0).capabilities, outputModalities: ["image"] } }
   expect(rankOffers([unknown, image, make("text", 1, 80)], "coding", "all").map((item) => item.offer.id)).toEqual(["text"])
+})
+
+test("scores a model with benchmark details instead of labeling it unrated", () => {
+  const snapshots = enrichProviderBenchmarks(
+    [{ provider:"openrouter", checkedAt:1, stale:false, offers:[make("detailed", 1)] }],
+    { fetchedAt:2, items:[{ modelId:"detailed", benchmark:"arena_codecategories", score:81, source:"openrouter" }] },
+  )
+  const [ranked] = rankOffers(snapshots[0].offers, "coding", "all")
+  expect(ranked?.rating).toBe("scored")
+  expect(ranked?.score).toBe(81)
+})
+
+test("keeps a details-only model without an assignable dimension unrated", () => {
+  // Negativprobe zur Aggregationskette: Details allein genuegen nicht — nur
+  // unzugeordnete Namen (Design/Suche) ergeben keinen coding-Score, das Modell
+  // bleibt unrated statt durch den bloessen details-Block "scored" zu werden.
+  const snapshots = enrichProviderBenchmarks(
+    [{ provider:"openrouter", checkedAt:1, stale:false, offers:[make("website", 1)] }],
+    { fetchedAt:2, items:[{ modelId:"website", benchmark:"arena_website", score:81, source:"design-arena" }] },
+  )
+  const [ranked] = rankOffers(snapshots[0].offers, "coding", "all")
+  expect(ranked?.rating).toBe("unrated")
+  expect(ranked?.score).toBeNull()
 })

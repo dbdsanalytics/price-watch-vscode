@@ -16,5 +16,5 @@ export function historyRows(history: PriceChange[]): string {
 }
 
 export function historyFilters(): string {
-  return `<div class="filters"><input id="history-search" placeholder="Modelle durchsuchen"><select id="history-provider"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="history-range"><option value="7">Letzte 7 Tage</option><option value="30">Letzte 30 Tage</option><option value="90" selected>Letzte 90 Tage</option></select></div>`
+  return `<div class="filters"><input id="history-search" placeholder="Modelle durchsuchen" aria-label="Preisverlauf durchsuchen"><select id="history-provider" aria-label="Anbieter filtern"><option value="">Alle Anbieter</option><option value="openrouter">OpenRouter</option><option value="opencode-zen">OpenCode Zen</option><option value="opencode-go">OpenCode Go</option></select><select id="history-range" aria-label="Zeitraum filtern"><option value="7">Letzte 7 Tage</option><option value="30">Letzte 30 Tage</option><option value="90" selected>Letzte 90 Tage</option></select></div>`
 }

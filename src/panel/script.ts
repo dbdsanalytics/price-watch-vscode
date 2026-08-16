@@ -16,8 +16,19 @@ const save = () => vscode.setState({
 
 const show = (id) => {
   document.querySelectorAll('.view').forEach((view) => { view.hidden = view.id !== id })
-  document.querySelectorAll('[data-view]').forEach((button) => { button.classList.toggle('active', button.dataset.view === id) })
+  document.querySelectorAll('[data-view]').forEach((button) => {
+    const isActive = button.dataset.view === id
+    button.classList.toggle('active', isActive)
+    if (isActive) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current')
+  })
   scrollTo(0, 0)
+  // Fokuslandung nur, wenn das Dokument den Fokus bereits hat – sonst wuerde ein
+  // Restore beim Laden den Fokus in die Kopfzeile reissen. Nach einem Klick ist
+  // der Tab ohnehin schon fokussiert, der Aufruf ist dann ein No-op.
+  if (document.hasFocus()) {
+    const active = document.querySelector('nav [data-view].active')
+    if (active instanceof HTMLElement) active.focus()
+  }
   save()
 }
 document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => show(button.dataset.view)))

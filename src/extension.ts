@@ -11,7 +11,7 @@ import type { AgentMetadata } from "./agents/discovery"
 import { mergeAgents, parseAgentMarkdown, parseOpenCodeConfigAgents, parseOpenCodeDefaultModel } from "./agents/discovery"
 import { collectAttention } from "./domain/attention"
 import { diffOffers, summarizeChanges, type PriceChange } from "./domain/changes"
-import { mergeHistory } from "./domain/history"
+import { mergeHistory, migrateLegacyState } from "./domain/history"
 import { carryForwardOffers, plausibilityWarning } from "./domain/snapshots"
 import { shouldRunAi } from "./domain/ai-schedule"
 import { enrichProviderBenchmarks } from "./domain/benchmarks"
@@ -181,6 +181,10 @@ async function refreshConnectedAccounts(context: vscode.ExtensionContext): Promi
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  // Einmalige Ueberfuehrung der v0.1/v0.2-State-Keys in den versionierten
+  // v3-Namespace (idempotent ueber priceWatch.migration.v1); Secrets fasst
+  // die Migration nicht an, sie laufen ausschliesslich ueber SecretStorage.
+  await migrateLegacyState(context.globalState, { historyKey: HISTORY_KEY, snapshotKey: SNAPSHOT_KEY, aiLastRunKey: AI_LAST_RUN_KEY })
   state.history = context.globalState.get<PriceChange[]>(HISTORY_KEY) ?? []
   state.snapshots = context.globalState.get<ProviderSnapshot[]>(SNAPSHOT_KEY) ?? []
   context.globalState.setKeysForSync([HISTORY_KEY])
