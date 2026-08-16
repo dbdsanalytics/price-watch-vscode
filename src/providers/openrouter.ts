@@ -1,5 +1,6 @@
 import type { ModelOffer } from "../domain/model"
 import { usdPerMillion } from "../domain/model"
+import { fetchWithRetry, type FetchLike } from "./retry"
 
 interface ApiModel { id: string; canonical_slug?: string; name: string; description?: string; context_length?: number; pricing?: Record<string, string>; architecture?: { input_modalities?: string[]; output_modalities?: string[] }; supported_parameters?: string[]; benchmarks?: { artificial_analysis?: { intelligence_index?: number; coding_index?: number; agentic_index?: number } } }
 
@@ -35,8 +36,8 @@ export function parseOpenRouterModels(body: { data?: ApiModel[] }): ModelOffer[]
   })
 }
 
-export async function fetchOpenRouterCatalog(): Promise<ModelOffer[]> {
-  const response = await fetch("https://openrouter.ai/api/v1/models?output_modalities=all&sort=intelligence-high-to-low", { signal: AbortSignal.timeout(20_000) })
+export async function fetchOpenRouterCatalog(fetchImpl?: FetchLike): Promise<ModelOffer[]> {
+  const response = await fetchWithRetry("https://openrouter.ai/api/v1/models?output_modalities=all&sort=intelligence-high-to-low", { signal: AbortSignal.timeout(20_000) }, { fetchImpl })
   if (!response.ok) throw new Error(`OpenRouter HTTP ${response.status}`)
   return parseOpenRouterModels(await response.json() as { data?: ApiModel[] })
 }

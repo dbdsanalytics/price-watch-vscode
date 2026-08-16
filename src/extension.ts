@@ -19,6 +19,7 @@ import { BENCHMARK_CACHE_KEY, loadBenchmarks } from "./domain/benchmark-cache"
 import type { ModelOffer } from "./domain/model"
 import type { ProviderSnapshot } from "./domain/provider"
 import type { DashboardState } from "./domain/dashboard"
+import { sanitizeErrorText } from "./domain/sanitize"
 import { fragments, panelHtml } from "./panel/index"
 import { aiDashboardSummary, aiFailure } from "./ai"
 import { fetchAllProviders } from "./providers/fetch-all"
@@ -85,24 +86,45 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
         ? await loadBenchmarks(context.globalState,openRouterKey,manual,fetchOpenRouterBenchmarks)
         : context.globalState.get<OpenRouterBenchmarkSnapshot>(BENCHMARK_CACHE_KEY) ?? null
       const previousByProvider = new Map(state.snapshots.map((snapshot) => [snapshot.provider, snapshot]))
-      const fresh = enrichProviderBenchmarks(await fetchAllProviders({
+      // Abrufe sind pro Anbieter isoliert: fetchAllProviders faengt jeden Loader
+      // einzeln, ein Ausfall faellt nur den eigenen Snapshot, nie den Zyklus.
+      const fetched = await fetchAllProviders({
         openrouter: fetchOpenRouterCatalog,
         "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
         "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers),
-      }),benchmarkSnapshot).map((snapshot) => {
-        // Vor carryForwardOffers: danach stammen die Angebote womoeglich aus
-        // dem alten Stand und der Vergleich waere gegen sich selbst.
-        const warning = plausibilityWarning(previousByProvider.get(snapshot.provider), snapshot)
-        return warning ? { ...snapshot, warning } : snapshot
       })
-      const snapshots = carryForwardOffers(state.snapshots, fresh)
-      const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
-      const changes = diffOffers(previous, successful)
-      state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now(), refreshError: null }
+      // Auch die reine Verarbeitung danach darf den Zyklus nie brechen: Jeder
+      // Schritt hat einen Rueckfall (letzter Stand bzw. roher Abruf), der
+      // Fehler wandert in refreshError und wird als Attention-Streifen und in
+      // der StatusBar sichtbar — persistiert und gerendert wird trotzdem.
+      let fresh = fetched
+      let snapshots = state.snapshots
+      let history = state.history
+      let changes: PriceChange[] = []
+      let agents = state.agents
+      let processingError: unknown
+      try {
+        fresh = enrichProviderBenchmarks(fetched, benchmarkSnapshot).map((snapshot) => {
+          // Vor carryForwardOffers: danach stammen die Angebote womoeglich aus
+          // dem alten Stand und der Vergleich waere gegen sich selbst.
+          const warning = plausibilityWarning(previousByProvider.get(snapshot.provider), snapshot)
+          return warning ? { ...snapshot, warning } : snapshot
+        })
+      } catch (error) { processingError = error }
+      try {
+        snapshots = carryForwardOffers(state.snapshots, fresh)
+        const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers)
+        changes = diffOffers(previous, successful)
+        agents = localAgents()
+        history = mergeHistory(state.history, changes)
+      } catch (error) { processingError = processingError ?? error }
+      state = { ...state, snapshots, history, agents, updatedAt: Date.now(), refreshError: processingError ? sanitizeErrorText(processingError instanceof Error ? processingError.message : String(processingError)) : null }
       const settings = vscode.workspace.getConfiguration("priceWatch")
       const aiKey = openRouterKey
       if (aiKey && shouldRunAi({ lastAt: context.globalState.get<number>(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get<number>("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
-        try { state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get<string>("aiModel", "openrouter/free")) } catch (error) { state.ai = aiFailure(error) }
+        // Der KI-Aufruf darf den Zyklus ebenfalls nie abbrechen: aiFailure
+        // landet im Zustand, Persistenz und Panel-Update laufen danach weiter.
+        try { state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get<string>("aiModel", "openrouter/free")) } catch (error) { state.ai = aiFailure(sanitizeErrorText(error instanceof Error ? error.message : String(error))) }
         await context.globalState.update(AI_LAST_RUN_KEY, Date.now())
       }
       await context.globalState.update(HISTORY_KEY, state.history)
@@ -110,10 +132,10 @@ async function refresh(context: vscode.ExtensionContext, manual: boolean): Promi
       if (changes.length && !manual) void vscode.window.showInformationMessage(`${summarizeChanges(changes)}. Preis-Watch öffnen?`, "Öffnen").then((choice)=>{ if (choice) void vscode.commands.executeCommand("priceWatch.open") })
       recomputeAttention(); updateStatus(); refreshPanel()
     } catch (error) {
-      // Netzwerkfehler fangen die Loader ab; alles danach — Anreicherung,
-      // Verrechnung, Persistenz — lief bisher ungeschuetzt. Beide automatischen
-      // Aufrufwege nutzen void refresh(...), eine Rejection blieb also unsichtbar.
-      state = { ...state, refreshError: error instanceof Error ? error.message : String(error) }
+      // Providerfehler fangen die Loader ab; was hier ankommt, sind Ausfaelle
+      // der Umgebung (Secret-Store, Persistenz, Webview). Auch dann wird der
+      // Zustand sichtbar aktualisiert, statt eine Rejection zu verlieren.
+      state = { ...state, refreshError: sanitizeErrorText(error instanceof Error ? error.message : String(error)) }
       recomputeAttention(); updateStatus(); refreshPanel()
     }
   })().finally(() => { running = undefined })
@@ -172,12 +194,12 @@ async function disconnectOpenRouterManagement(context: vscode.ExtensionContext):
 async function refreshConnectedAccounts(context: vscode.ExtensionContext): Promise<void> {
   const providers: AccountStatus["provider"][] = ["openrouter","opencode-zen","opencode-go","claude-code"]
   const accounts: AccountStatus[] = []
-  for (const provider of providers) { const token = await context.secrets.get(secretKey(provider)); if (!token) continue; try { accounts.push(await verifyAccount(provider, token)) } catch (error) { accounts.push(unavailableAccount(provider,error instanceof Error ? error.message : String(error))) } }
+  for (const provider of providers) { const token = await context.secrets.get(secretKey(provider)); if (!token) continue; try { accounts.push(await verifyAccount(provider, token)) } catch (error) { accounts.push(unavailableAccount(provider,sanitizeErrorText(error instanceof Error ? error.message : String(error)))) } }
   state.accounts = accounts
   const managementKey = await context.secrets.get(secretKey("openrouter-management"))
   if (!managementKey) state.openRouterManagement = null
   else try { state.openRouterManagement = await fetchOpenRouterManagement(managementKey) }
-  catch (error) { state.openRouterManagement = { state: "unavailable", totalCreditsUsd: 0, totalUsageUsd: 0, remainingCreditsUsd: 0, keys: [], message: error instanceof Error ? error.message : String(error) } }
+  catch (error) { state.openRouterManagement = { state: "unavailable", totalCreditsUsd: 0, totalUsageUsd: 0, remainingCreditsUsd: 0, keys: [], message: sanitizeErrorText(error instanceof Error ? error.message : String(error)) } }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {

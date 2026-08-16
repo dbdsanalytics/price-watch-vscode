@@ -1,3 +1,5 @@
+import { fetchWithRetry, type FetchLike } from "./retry"
+
 export interface OpenRouterBenchmark {
   modelId: string
   modelName?: string
@@ -54,8 +56,8 @@ export function parseOpenRouterBenchmarks(body:BenchmarkBody, fetchedAt=Date.now
   return { fetchedAt, asOf:typeof body.meta?.as_of === "string" ? body.meta.as_of : undefined, citation:typeof body.meta?.citation === "string" ? body.meta.citation : undefined, items }
 }
 
-export async function fetchOpenRouterBenchmarks(key:string):Promise<OpenRouterBenchmarkSnapshot> {
-  const response=await fetch("https://openrouter.ai/api/v1/benchmarks",{ headers:{ Authorization:`Bearer ${key}` }, signal:AbortSignal.timeout(20_000) })
+export async function fetchOpenRouterBenchmarks(key:string, fetchImpl?:FetchLike):Promise<OpenRouterBenchmarkSnapshot> {
+  const response=await fetchWithRetry("https://openrouter.ai/api/v1/benchmarks",{ headers:{ Authorization:`Bearer ${key}` }, signal:AbortSignal.timeout(20_000) }, { fetchImpl })
   if (!response.ok) throw new Error(`OpenRouter Benchmarks HTTP ${response.status}`)
   return parseOpenRouterBenchmarks(await response.json() as BenchmarkBody)
 }

@@ -1,5 +1,6 @@
 import type { ModelOffer, ModelQuota } from "../domain/model"
 import type { ProviderId } from "../domain/provider"
+import { fetchWithRetry, type FetchLike } from "./retry"
 
 /** Modellnamen aus der Doku auf eine vergleichbare Form bringen ("GPT 5.6 Luna (≤ 272K)" → "gpt-5.6-luna"). */
 export function norm(name: string): string {
@@ -120,8 +121,8 @@ export function parseGoDocument(mdx: string): GoCatalog {
   return { subscription: { firstMonthUsd: Number(match?.[1] ?? 0), monthlyUsd: Number(match?.[2] ?? 0) }, offers: parsePricing(mdx, "opencode-go") }
 }
 
-export async function fetchOpenCodeDocument(url: string): Promise<string> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(20_000) })
+export async function fetchOpenCodeDocument(url: string, fetchImpl?: FetchLike): Promise<string> {
+  const response = await fetchWithRetry(url, { signal: AbortSignal.timeout(20_000) }, { fetchImpl })
   if (!response.ok) throw new Error(`OpenCode HTTP ${response.status}`)
   return response.text()
 }

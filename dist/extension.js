@@ -482,6 +482,11 @@ async function loadBenchmarks(storage, key, forceRefresh, loader, now = Date.now
   }
 }
 
+// src/domain/sanitize.ts
+function sanitizeErrorText(text) {
+  return text.replace(/sk-[A-Za-z0-9]{16,}/g, "***").replace(/Bearer\s+[A-Za-z0-9._-]{10,}/g, "***");
+}
+
 // src/panel/index.ts
 var import_crypto = require("crypto");
 
@@ -838,9 +843,46 @@ async function fetchAllProviders(loaders) {
     try {
       return { provider, offers: await loaders[provider](), checkedAt: Date.now(), stale: false };
     } catch (error) {
-      return { provider, offers: [], checkedAt: Date.now(), stale: true, error: { kind: "network", message: error instanceof Error ? error.message : String(error) } };
+      return { provider, offers: [], checkedAt: Date.now(), stale: true, error: { kind: "network", message: sanitizeErrorText(error instanceof Error ? error.message : String(error)) } };
     }
   }));
+}
+
+// src/providers/retry.ts
+var RETRYABLE_STATUS = /* @__PURE__ */ new Set([408, 429, 500, 502, 503, 504]);
+var RETRY_DELAY_MS = 250;
+var RETRY_MAX_DELAY_MS = 500;
+var sleepDefault = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function retryAfterMs(response, now = Date.now()) {
+  const header = response.headers.get("retry-after");
+  if (!header) return void 0;
+  const seconds = Number.parseInt(header, 10);
+  if (Number.isFinite(seconds) && String(seconds) === header.trim() && seconds >= 0) return seconds * 1e3;
+  const date = Date.parse(header);
+  return Number.isFinite(date) ? Math.max(0, date - now) : void 0;
+}
+async function fetchWithRetry(input, init, options = {}) {
+  const retries = Math.max(0, options.retries ?? 1);
+  const doFetch = options.fetchImpl ?? globalThis.fetch;
+  const sleep = options.sleep ?? sleepDefault;
+  const signal = init?.signal;
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await doFetch(input, init);
+      if (attempt < retries && RETRYABLE_STATUS.has(response.status)) {
+        const delay = retryAfterMs(response, options.now?.() ?? Date.now());
+        await sleep(delay ?? Math.min(RETRY_MAX_DELAY_MS, RETRY_DELAY_MS * 2 ** attempt));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || signal?.aborted) throw error;
+      await sleep(Math.min(RETRY_MAX_DELAY_MS, RETRY_DELAY_MS * 2 ** attempt));
+    }
+  }
+  throw lastError;
 }
 
 // src/providers/opencode-docs.ts
@@ -939,8 +981,8 @@ function parseGoDocument(mdx) {
   const match = mdx.match(/\$(\d+(?:\.\d+)?) for your first month[^$]{0,40}\$(\d+(?:\.\d+)?)\/month/i);
   return { subscription: { firstMonthUsd: Number(match?.[1] ?? 0), monthlyUsd: Number(match?.[2] ?? 0) }, offers: parsePricing(mdx, "opencode-go") };
 }
-async function fetchOpenCodeDocument(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(2e4) });
+async function fetchOpenCodeDocument(url, fetchImpl) {
+  const response = await fetchWithRetry(url, { signal: AbortSignal.timeout(2e4) }, { fetchImpl });
   if (!response.ok) throw new Error(`OpenCode HTTP ${response.status}`);
   return response.text();
 }
@@ -984,8 +1026,8 @@ function parseOpenRouterModels(body) {
     };
   });
 }
-async function fetchOpenRouterCatalog() {
-  const response = await fetch("https://openrouter.ai/api/v1/models?output_modalities=all&sort=intelligence-high-to-low", { signal: AbortSignal.timeout(2e4) });
+async function fetchOpenRouterCatalog(fetchImpl) {
+  const response = await fetchWithRetry("https://openrouter.ai/api/v1/models?output_modalities=all&sort=intelligence-high-to-low", { signal: AbortSignal.timeout(2e4) }, { fetchImpl });
   if (!response.ok) throw new Error(`OpenRouter HTTP ${response.status}`);
   return parseOpenRouterModels(await response.json());
 }
@@ -1025,8 +1067,8 @@ function parseOpenRouterBenchmarks(body, fetchedAt = Date.now()) {
   }
   return { fetchedAt, asOf: typeof body.meta?.as_of === "string" ? body.meta.as_of : void 0, citation: typeof body.meta?.citation === "string" ? body.meta.citation : void 0, items };
 }
-async function fetchOpenRouterBenchmarks(key) {
-  const response = await fetch("https://openrouter.ai/api/v1/benchmarks", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2e4) });
+async function fetchOpenRouterBenchmarks(key, fetchImpl) {
+  const response = await fetchWithRetry("https://openrouter.ai/api/v1/benchmarks", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2e4) }, { fetchImpl });
   if (!response.ok) throw new Error(`OpenRouter Benchmarks HTTP ${response.status}`);
   return parseOpenRouterBenchmarks(await response.json());
 }
@@ -1094,25 +1136,42 @@ async function refresh(context, manual) {
       const openRouterKey = await context.secrets.get(secretKey("openrouter"));
       const benchmarkSnapshot = openRouterKey ? await loadBenchmarks(context.globalState, openRouterKey, manual, fetchOpenRouterBenchmarks) : context.globalState.get(BENCHMARK_CACHE_KEY) ?? null;
       const previousByProvider = new Map(state.snapshots.map((snapshot) => [snapshot.provider, snapshot]));
-      const fresh = enrichProviderBenchmarks(await fetchAllProviders({
+      const fetched = await fetchAllProviders({
         openrouter: fetchOpenRouterCatalog,
         "opencode-zen": async () => requireOffers("opencode-zen", parseZenDocument(await fetchOpenCodeDocument(ZEN_URL))),
         "opencode-go": async () => requireOffers("opencode-go", parseGoDocument(await fetchOpenCodeDocument(GO_URL)).offers)
-      }), benchmarkSnapshot).map((snapshot) => {
-        const warning = plausibilityWarning(previousByProvider.get(snapshot.provider), snapshot);
-        return warning ? { ...snapshot, warning } : snapshot;
       });
-      const snapshots = carryForwardOffers(state.snapshots, fresh);
-      const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers);
-      const changes = diffOffers(previous, successful);
-      state = { ...state, snapshots, history: mergeHistory(state.history, changes), agents: localAgents(), updatedAt: Date.now(), refreshError: null };
+      let fresh = fetched;
+      let snapshots = state.snapshots;
+      let history = state.history;
+      let changes = [];
+      let agents = state.agents;
+      let processingError;
+      try {
+        fresh = enrichProviderBenchmarks(fetched, benchmarkSnapshot).map((snapshot) => {
+          const warning = plausibilityWarning(previousByProvider.get(snapshot.provider), snapshot);
+          return warning ? { ...snapshot, warning } : snapshot;
+        });
+      } catch (error) {
+        processingError = error;
+      }
+      try {
+        snapshots = carryForwardOffers(state.snapshots, fresh);
+        const successful = snapshots.flatMap((snapshot) => snapshot.error ? [] : snapshot.offers);
+        changes = diffOffers(previous, successful);
+        agents = localAgents();
+        history = mergeHistory(state.history, changes);
+      } catch (error) {
+        processingError = processingError ?? error;
+      }
+      state = { ...state, snapshots, history, agents, updatedAt: Date.now(), refreshError: processingError ? sanitizeErrorText(processingError instanceof Error ? processingError.message : String(processingError)) : null };
       const settings = vscode.workspace.getConfiguration("priceWatch");
       const aiKey = openRouterKey;
       if (aiKey && shouldRunAi({ lastAt: context.globalState.get(AI_LAST_RUN_KEY) ?? null, now: Date.now(), everyHours: settings.get("aiEveryHours", 6), manual, hasChanges: changes.length > 0 })) {
         try {
           state.ai = await aiDashboardSummary(aiKey, state.agents, changes, settings.get("aiModel", "openrouter/free"));
         } catch (error) {
-          state.ai = aiFailure(error);
+          state.ai = aiFailure(sanitizeErrorText(error instanceof Error ? error.message : String(error)));
         }
         await context.globalState.update(AI_LAST_RUN_KEY, Date.now());
       }
@@ -1125,7 +1184,7 @@ async function refresh(context, manual) {
       updateStatus();
       refreshPanel();
     } catch (error) {
-      state = { ...state, refreshError: error instanceof Error ? error.message : String(error) };
+      state = { ...state, refreshError: sanitizeErrorText(error instanceof Error ? error.message : String(error)) };
       recomputeAttention();
       updateStatus();
       refreshPanel();
@@ -1196,7 +1255,7 @@ async function refreshConnectedAccounts(context) {
     try {
       accounts.push(await verifyAccount(provider, token));
     } catch (error) {
-      accounts.push(unavailableAccount(provider, error instanceof Error ? error.message : String(error)));
+      accounts.push(unavailableAccount(provider, sanitizeErrorText(error instanceof Error ? error.message : String(error))));
     }
   }
   state.accounts = accounts;
@@ -1205,7 +1264,7 @@ async function refreshConnectedAccounts(context) {
   else try {
     state.openRouterManagement = await fetchOpenRouterManagement(managementKey);
   } catch (error) {
-    state.openRouterManagement = { state: "unavailable", totalCreditsUsd: 0, totalUsageUsd: 0, remainingCreditsUsd: 0, keys: [], message: error instanceof Error ? error.message : String(error) };
+    state.openRouterManagement = { state: "unavailable", totalCreditsUsd: 0, totalUsageUsd: 0, remainingCreditsUsd: 0, keys: [], message: sanitizeErrorText(error instanceof Error ? error.message : String(error)) };
   }
 }
 async function activate(context) {
